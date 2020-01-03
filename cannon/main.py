@@ -8,7 +8,9 @@ assert sys.version_info>=(3,0), "cannon does not support Python 2"
 
 from textfsm import TextFSM
 import transitions
-import pexpect
+import pexpect as px
+
+"""Can't trigger event _go_LOGIN_SUCCESS_UNPRIV from state SEND_LOGIN_PASSWORD!"""
 
 class UnexpectedPrompt(Exception):
     """Exception for an Unexpected Prompt"""
@@ -58,7 +60,10 @@ class Shell(transitions.Machine):
         self.credentials_iterator = self.iter_credentials()
         self.proto_dict = {}
 
-        self.base_prompt_regex = ['assword:', 'name:', '[\n\r]\S+?>', '[\n\r]\S+?#']
+        # Detect a typical linux CLI prompt...
+        linux_prompt = r'[\n\r][^\r\n\$]+\$\s'
+        self.base_prompt_regex = [r'assword:', r'name:', r'[\n\r]\S+?>', 
+            linux_prompt, r'[\n\r]\S+?#']
         self.matching_prompt_regex = ""
 
         #######################################################################
@@ -109,6 +114,10 @@ class Shell(transitions.Machine):
         #######################################################################
         self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
             source='SEND_LOGIN_USERNAME', dest='LOGIN_SUCCESS_UNPRIV',
+            after='after_LOGIN_SUCCESS_UNPRIV_cb')
+
+        self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
+            source='SEND_LOGIN_PASSWORD', dest='LOGIN_SUCCESS_UNPRIV',
             after='after_LOGIN_SUCCESS_UNPRIV_cb')
 
         self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
@@ -198,8 +207,9 @@ class Shell(transitions.Machine):
         try:
             index = self.child.expect(cli_prompts, timeout=command_timeout)
             self.matching_prompt_regex = cli_prompts[index] # Set matching prompt
-        except pexpect.TIMEOUT:
-            self._go_INTERACT()  # Catch up on queued prompts
+        except px.TIMEOUT:
+            # FIXME... I commented this out
+            #self._go_INTERACT()  # Catch up on queued prompts
             return None          # Force bypass of template response parsing
 
         # Something is wrong if we got a username or password prompt...
@@ -322,9 +332,9 @@ class Shell(transitions.Machine):
 
         # run the ssh or telnet command
         try:
-            self.child = pexpect.spawn(cmd, timeout=self.login_timeout,
+            self.child = px.spawn(cmd, timeout=self.login_timeout,
                 encoding=self.encoding)
-        except pexpect.EOF:
+        except px.EOF:
             time.sleep(70)
 
         # log to screen if requested
@@ -341,8 +351,10 @@ class Shell(transitions.Machine):
             elif index==2:
                 self._go_LOGIN_SUCCESS_UNPRIV()
             elif index==3:
+                self._go_LOGIN_SUCCESS_UNPRIV()
+            elif index==4:
                 self._go_LOGIN_SUCCESS_PRIV()
-        except pexpect.EOF:
+        except px.EOF:
             time.sleep(70)
             self._go_CONNECT()
 
@@ -368,8 +380,10 @@ class Shell(transitions.Machine):
             elif index==2:
                 self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
             elif index==3:
+                self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
+            elif index==4:
                 self._go_LOGIN_SUCCESS_PRIV()  # We got a priv prompt
-        except pexpect.EOF:
+        except px.EOF:
             self.child.close()
             self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
 
@@ -390,6 +404,8 @@ class Shell(transitions.Machine):
         elif index==2:
             self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
         elif index==3:
+            self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
+        elif index==4:
             self._go_LOGIN_SUCCESS_PRIV()    # We got a priv prompt here
 
     def after_LOGIN_SUCCESS_UNPRIV_cb(self):
@@ -410,6 +426,8 @@ class Shell(transitions.Machine):
             elif index==2:
                 raise Exception("Unexpected prompt: '>'")
             elif index==3:
+                raise Exception("Unexpected prompt: '$'")
+            elif index==4:
                 self._go_LOGIN_SUCCESS_PRIV()    # We got a priv prompt here
 
         self._go_INTERACT()
@@ -431,6 +449,8 @@ class Shell(transitions.Machine):
         elif index==2:
             raise Exception("Unexpected prompt: '>'")
         elif index==3:
+            raise Exception("Unexpected prompt: '$'")
+        elif index==4:
             self._go_LOGIN_SUCCESS_PRIV()    # We got a priv prompt here
 
     def after_LOGIN_SUCCESS_PRIV_cb(self):
@@ -450,10 +470,11 @@ class Shell(transitions.Machine):
         ## Confirm we are in the correct state (INTERACT)
         #######################################################################
         ## Catch up with any queued prompts, we know to exit if we get a 
-        ##   pexpect.TIMEOUT error
+        ##   px.TIMEOUT error
         finished = False
         self.child.sendline('\r')
         while not finished:
+            index = -1
             try:
                 index = self.child.expect(self.base_prompt_regex,
                     timeout=1) # Use a very short timeout here
@@ -466,11 +487,21 @@ class Shell(transitions.Machine):
                     assert self.auto_priv_mode is False
                     self.login_attempts = 0
                 elif index==3:
+                    # We should only get to this prompt if auto_priv_mode is 
+                    #     False
+                    assert self.auto_priv_mode is False
+                    self.login_attempts = 0
+                elif index==4:
                     # We don't need to attempt any more logins if we have 
                     #     a priv prompt
                     self.login_attempts = 0
 
-            except pexpect.TIMEOUT:
+                print("NEED TO DETECT AGAIN - INDEX: {}".format(index))
+                print("  FOUND: {}".format(self.child.before))
+
+            except px.TIMEOUT:
+                print("FINISHED - INDEX: {}".format(index))
+                print("BEFORE: '{}'".format(self.child.before))
                 finished = True
 
 
@@ -489,4 +520,4 @@ if __name__=='__main__':
     values = sess.execute('show ip int brief', 
         template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")
     print("VALUES "+str(values))
-    sess.child.close()
+    sess.close()
