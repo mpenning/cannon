@@ -1,3 +1,8 @@
+Introduction
+============
+
+cannon is a wrapper around pexpect_ to connect with remote server or network 
+devices with ssh.
 
 Example Usage
 =============
@@ -22,3 +27,5 @@ Example Usage
         template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")
     print("VALUES "+str(values))
     sess.close()
+
+.. _pexpect: https://pypi.python.org/pypi/pexpect
