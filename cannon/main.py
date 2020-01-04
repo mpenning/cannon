@@ -159,7 +159,7 @@ class Shell(transitions.Machine):
         self._go_SELECT_PROTOCOL()
 
     def execute(self, cmd=None, template=None, wait=0.0, prompts=(),
-        command_timeout=0.0):
+        command_timeout=0.0, carriage_return=True):
         """Run a command and optionally parse with a TextFSM template
 
             - `cmd` is the command to execute
@@ -167,6 +167,7 @@ class Shell(transitions.Machine):
             - `wait` is a built-in sleep delay after running the command
             - `prompts` is a tuple of prompt regexs to apply to the output of the command
             - `command_timeout` is how long we should wait for the command prompt to return
+            - `carriage_return` indicates whether the command should be followed with a carriage-return.  The values are either True or False (default is True, meaning the CR will be sent after the command).
 
         execute() returns a list of dicts if `template` is specified; otherwise
         it returns None.
@@ -176,9 +177,11 @@ class Shell(transitions.Machine):
         if command_timeout==0.0:
             command_timeout = self.command_timeout
 
-        arg_list = ('cmd', 'wait', 'template', 'prompts', 'command_timeout')
+        arg_list = ('cmd', 'wait', 'template', 'prompts', 'command_timeout',
+            'carriage_return')
         arg = list()
         if self.debug:
+            # build the debugging string...
             for ii in arg_list:
                 if ii=='cmd':
                     arg.append("'"+cmd+"'")
@@ -192,10 +195,15 @@ class Shell(transitions.Machine):
                     arg.append('prompts={}'.format(prompts))
                 elif ii=='command_timeout':
                     arg.append('command_timeout={}'.format(command_timeout))
+                elif ii=='carriage_return':
+                    arg.append('carriage_return={}'.format(carriage_return))
             logstr = ', '.join(arg)
             print('  execute("{}")'.format(logstr))
 
-        self.child.sendline(cmd)
+        if carriage_return:
+            self.child.sendline(cmd)
+        else:
+            self.child.send(cmd)
 
         # Extend the list of cli_prompts if `prompts` was specified
         cli_prompts = self.base_prompt_regex
@@ -211,10 +219,6 @@ class Shell(transitions.Machine):
             # FIXME... I commented this out
             #self._go_INTERACT()  # Catch up on queued prompts
             return None          # Force bypass of template response parsing
-
-        # Something is wrong if we got a username or password prompt...
-        if (index==0 or index==1):
-            raise UnexpectedPrompt("Unexpected prompt during execute()")
 
         if float(wait)>0.0:
             time.sleep(wait)
