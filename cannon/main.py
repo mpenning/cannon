@@ -4,6 +4,7 @@ import socket
 import time
 import sys
 import re
+import os
 assert sys.version_info>=(3,0), "cannon does not support Python 2"
 
 from textfsm import TextFSM
@@ -225,7 +226,12 @@ class Shell(transitions.Machine):
 
         ## If template is specified, parse the response into a list of dicts...
         if template is not None:
-            fh = StringIO(template)
+            if os.path.isfile(str(template)):
+                # open the textfsm template from disk...
+                fh = open(template, 'r')
+            else:
+                # build a fake filehandle around textfsm template string
+                fh = StringIO(template)
             fsm = TextFSM(fh)
             header = fsm.header
             values = fsm.ParseText(self.response)
