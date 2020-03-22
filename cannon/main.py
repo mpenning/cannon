@@ -8,8 +8,8 @@ import os
 assert sys.version_info>=(3,0), "cannon does not support Python 2"
 
 from textfsm import TextFSM
-import transitions
 import pexpect as px
+import transitions
 
 """Can't trigger event _go_LOGIN_SUCCESS_UNPRIV from state SEND_LOGIN_PASSWORD!"""
 
@@ -32,7 +32,7 @@ class Account(object):
 class Shell(transitions.Machine):
     def __init__(self, host='', credentials=(), protocols=({'proto': 'ssh',
         'port': 22}, {'proto': 'telnet', 'port': 23}), auto_priv_mode=True,
-        log_screen=False, debug=False, command_timeout=30, login_timeout=30,
+        log_screen=False, debug=False, command_timeout=30, login_timeout=10,
         relogin_delay=120, encoding='utf-8', login_attempts=3):
 
         STATES = ('INIT_SESSION', 'SELECT_PROTOCOL', 
@@ -62,9 +62,10 @@ class Shell(transitions.Machine):
         self.proto_dict = {}
 
         # Detect a typical linux CLI prompt...
-        linux_prompt = r'[\n\r][^\r\n\$]+\$\s'
-        self.base_prompt_regex = [r'assword:', r'name:', r'[\n\r]\S+?>', 
-            linux_prompt, r'[\n\r]\S+?#']
+        linux_prompt = '[\n\r]+[^\r\n\$]+\$\s'
+        self.base_prompt_regex = ['assword:', 'sername:', '[\n\r]+[^\n\r>]+?>\s*', 
+            linux_prompt, '[\n\r]+[^\n\r#]+?#\s*']
+
         self.matching_prompt_regex = ""
 
         #######################################################################
@@ -135,6 +136,10 @@ class Shell(transitions.Machine):
         #######################################################################
         ## Transitions to LOGIN_SUCCESS_PRIV state
         #######################################################################
+        self.add_transition(trigger='_go_LOGIN_SUCCESS_PRIV', 
+            source='CONNECT', dest='LOGIN_SUCCESS_PRIV',
+            after='after_LOGIN_SUCCESS_PRIV_cb')
+
         self.add_transition(trigger='_go_LOGIN_SUCCESS_PRIV', 
             source='SEND_LOGIN_PASSWORD', dest='LOGIN_SUCCESS_PRIV',
             after='after_LOGIN_SUCCESS_PRIV_cb')
@@ -216,9 +221,21 @@ class Shell(transitions.Machine):
         try:
             index = self.child.expect(cli_prompts, timeout=command_timeout)
             self.matching_prompt_regex = cli_prompts[index] # Set matching prompt
-        except px.TIMEOUT:
+            if self.debug:
+                print("  execute() - self.child.expect() matched prompt index={}".format(index))
+
+        except px.exceptions.TIMEOUT:
             # FIXME... I commented this out
-            #self._go_INTERACT()  # Catch up on queued prompts
+            #self._go_INTERACT() # Catch up on queued prompts
+            if self.debug:
+                print("  px.exception.TIMEOUT while executing '{}'".format(cmd))
+            return None          # Force bypass of template response parsing
+
+        except px.exceptions.EOF:
+            # FIXME... I commented this out
+            #self._go_INTERACT() # Catch up on queued prompts
+            if self.debug:
+                print("  px.exception.EOF while executing '{}'".format(cmd))
             return None          # Force bypass of template response parsing
 
         if float(wait)>0.0:
@@ -322,6 +339,7 @@ class Shell(transitions.Machine):
 
             if self.child is not None:
                 self.child.close()      # Make way for a fresh child instance
+
             self._go_CONNECT()
 
             self.login_attempts -= 1
@@ -342,9 +360,15 @@ class Shell(transitions.Machine):
 
         # run the ssh or telnet command
         try:
+            if self.debug:
+                print("  pexpect.spawn('{}')".format(cmd))
             self.child = px.spawn(cmd, timeout=self.login_timeout,
                 encoding=self.encoding)
-        except px.EOF:
+
+            # https://pexpect.readthedocs.io/en/stable/commonissues.html
+            #self.child.delaybeforesend = None
+
+        except px.exceptions.EOF:
             time.sleep(70)
 
         # log to screen if requested
@@ -354,6 +378,10 @@ class Shell(transitions.Machine):
         try:
             index = self.child.expect(self.base_prompt_regex, 
                 timeout=self.login_timeout)
+
+            if self.debug:
+                print("   after_CONNECT_cb() - self.child.expect() matched prompt index: {}".format(index))
+
             if index==0:
                 self._go_SEND_LOGIN_PASSWORD()
             elif index==1:
@@ -364,7 +392,7 @@ class Shell(transitions.Machine):
                 self._go_LOGIN_SUCCESS_UNPRIV()
             elif index==4:
                 self._go_LOGIN_SUCCESS_PRIV()
-        except px.EOF:
+        except px.exceptions.EOF:
             time.sleep(70)
             self._go_CONNECT()
 
@@ -378,6 +406,9 @@ class Shell(transitions.Machine):
         try:
             index = self.child.expect(self.base_prompt_regex,
                 timeout=self.login_timeout)
+
+            if self.debug:
+                print("\n   after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matched prompt index: {}".format(index))
 
             if index==0:  # This was the wrong password
                 self.child.close()
@@ -393,7 +424,16 @@ class Shell(transitions.Machine):
                 self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
             elif index==4:
                 self._go_LOGIN_SUCCESS_PRIV()  # We got a priv prompt
-        except px.EOF:
+
+        except px.exceptions.EOF:
+            if self.debug:
+                print("   after_SEND_LOGIN_PASSWORD_cb() - pexpect.exceptions.EOF error")
+            self.child.close()
+            self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
+
+        except px.exceptions.TIMEOUT:
+            if self.debug:
+                print("   after_SEND_LOGIN_PASSWORD_cb() - pexpect error: TIMEOUT")
             self.child.close()
             self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
 
@@ -406,6 +446,9 @@ class Shell(transitions.Machine):
 
         index = self.child.expect(self.base_prompt_regex,
             timeout=self.login_timeout)
+
+        if self.debug:
+            print("   after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matched prompt index: {}".format(index))
 
         if index==0:
             self._go_SEND_LOGIN_PASSWORD()
@@ -429,6 +472,9 @@ class Shell(transitions.Machine):
             index = self.child.expect(self.base_prompt_regex,
                 timeout=self.command_timeout)
 
+            if self.debug:
+                print("   after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matched prompt index: {}".format(index))
+
             if index==0:
                 self._go_SEND_PRIV_PASSWORD()
             elif index==1:
@@ -451,6 +497,9 @@ class Shell(transitions.Machine):
 
         index = self.child.expect(self.base_prompt_regex,
             timeout=self.command_timeout)
+
+        if self.debug:
+            print("   after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matched prompt index: {}".format(index))
 
         if index==0:
             self._go_SEND_PRIV_PASSWORD()
@@ -480,14 +529,28 @@ class Shell(transitions.Machine):
         ## Confirm we are in the correct state (INTERACT)
         #######################################################################
         ## Catch up with any queued prompts, we know to exit if we get a 
-        ##   px.TIMEOUT error
+        ##   px.exceptions.TIMEOUT error
+        if self.debug:
+            print("\n   after_INTERACT_cb() - Catch up on queued prompts")
+
+        #self.child.send('\r') # FIXME
+        self.child.sendline('')
+
         finished = False
-        self.child.sendline('\r')
         while not finished:
             index = -1
             try:
+                # FIXME poo
+                #linux_prompt = '[\n\r]+.+?\$\s'
+                #self.base_prompt_regex = ['assword:', 'name:', '\s*[\n\r]+.+?>\s*', 
+                #    linux_prompt, '\s*[\n\r]+[^\n\r#]+?#\s*']
+
                 index = self.child.expect(self.base_prompt_regex,
                     timeout=1) # Use a very short timeout here
+                print("    INDEX: {}".format(index))
+
+                if self.debug:
+                    print("\n  after_INTERACT_cb() - self.child.expect() matched prompt index: {}".format(index))
 
                 if (index==0 or index==1):
                     raise Exception("Unexpected prompt in INTERACT state")
@@ -506,12 +569,19 @@ class Shell(transitions.Machine):
                     #     a priv prompt
                     self.login_attempts = 0
 
-                print("NEED TO DETECT AGAIN - INDEX: {}".format(index))
-                print("  FOUND: {}".format(self.child.before))
+            except px.exceptions.TIMEOUT:
+                assert index==-1
+                if self.debug:
+                    print("  px.exceptions.TIMEOUT")
 
-            except px.TIMEOUT:
-                print("FINISHED - INDEX: {}".format(index))
-                print("BEFORE: '{}'".format(self.child.before))
+                self.login_attempts = 0
+                finished = True
+
+            except px.exceptions.EOF:
+                if self.debug:
+                    print("  px.exceptions.EOF")
+
+                self.login_attempts = 0
                 finished = True
 
 
