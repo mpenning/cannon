@@ -252,10 +252,13 @@ class Shell(transitions.Machine):
             fsm = TextFSM(fh)
             header = fsm.header
             values = fsm.ParseText(self.response)
+            assert values != [], "Could not match any values with the template."
 
             ## Pack the extracted values into a list of dicts, using keys from
             ##   the header file
             retval = list()
+
+            # Values is a nested list of captured information
             for ii in (values, values[0]):
                 if not isinstance(ii, list):
                     continue
@@ -547,7 +550,6 @@ class Shell(transitions.Machine):
 
                 index = self.child.expect(self.base_prompt_regex,
                     timeout=1) # Use a very short timeout here
-                print("    INDEX: {}".format(index))
 
                 if self.debug:
                     print("\n  after_INTERACT_cb() - self.child.expect() matched prompt index: {}".format(index))
