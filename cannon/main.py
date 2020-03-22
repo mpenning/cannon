@@ -63,8 +63,10 @@ class Shell(transitions.Machine):
 
         # Detect a typical linux CLI prompt...
         linux_prompt = '[\n\r]+[^\r\n\$]+\$\s'
-        self.base_prompt_regex = ['assword:', 'sername:', '[\n\r]+[^\n\r>]+?>\s*', 
-            linux_prompt, '[\n\r]+[^\n\r#]+?#\s*']
+        # '[\n\r]+\S[^\n\r>]+?>\s*'  -> match > line that doesn't begin w/ space
+        # '[\n\r]+\S[^\n\r#]+?#\s*'  -> match # line that doesn't begin w/ space
+        self.base_prompt_regex = ['assword:', 'sername:', '[\n\r]+\S[^\n\r>]+?>\s*', 
+            linux_prompt, '[\n\r]+\S[^\n\r#]+?#\s*']
 
         self.matching_prompt_regex = ""
 
