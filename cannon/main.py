@@ -18,6 +18,40 @@ class UnexpectedPrompt(Exception):
     def __init__(self):
         super(UnexpectedStateTransition, self)
 
+class TeeStdoutFile(object):
+    def __init__(self, log_file="", filemode="w", log_screen=False):
+        self.log_file = os.path.expanduser(log_file)
+        self.filemode = filemode
+        self.log_screen = log_screen
+        self.stdout = sys.stdout
+
+        try:
+            assert os.path.isfile(self.log_file) is False
+        except AssertionError:
+            raise ValueError("Cannot overwrite existing log_file={}".format(
+                self.log_file))
+            sys.exit(1)
+
+        self.fh = open(self.log_file, self.filemode)
+
+    def __del__(self):
+        sys.stdout = self.stdout
+        try:
+            self.fh.close()
+        except AttributeError:
+            # We hit this if self.fh was never opened such as existing log_file
+            pass
+
+    def write(self, line):
+        self.fh.write(line)
+        self.stdout.write(line)
+
+    def flush(self):
+        self.fh.flush()
+
+    def close(self):
+        self.fh.close()
+
 
 class Account(object):
     def __init__(self, user, passwd="", priv_passwd=""):
@@ -32,8 +66,9 @@ class Account(object):
 class Shell(transitions.Machine):
     def __init__(self, host='', credentials=(), protocols=({'proto': 'ssh',
         'port': 22}, {'proto': 'telnet', 'port': 23}), auto_priv_mode=True,
-        log_screen=False, debug=False, command_timeout=30, login_timeout=10,
-        relogin_delay=120, encoding='utf-8', login_attempts=3):
+        log_screen=False, log_file='', debug=False, command_timeout=30, 
+        login_timeout=10, relogin_delay=120, encoding='utf-8',
+        login_attempts=3):
 
         STATES = ('INIT_SESSION', 'SELECT_PROTOCOL', 
             'SELECT_LOGIN_CREDENTIALS', 'SEND_LOGIN_USERNAME', 
@@ -48,6 +83,7 @@ class Shell(transitions.Machine):
         self.protocols = protocols
         self.auto_priv_mode = auto_priv_mode
         self.log_screen = log_screen
+        self.log_file = os.path.expanduser(log_file)
         self.debug = debug
         self.command_timeout = command_timeout
         self.login_timeout = login_timeout
@@ -377,8 +413,16 @@ class Shell(transitions.Machine):
             time.sleep(70)
 
         # log to screen if requested
-        if self.log_screen:
+        if self.log_screen and self.log_file=="":
             self.child.logfile = sys.stdout
+
+        elif (self.log_screen is False) and self.log_file!="":
+            self.child.logfile = open(self.log_file, 'w')
+
+        elif (self.log_screen is True) and self.log_file!="":
+            self.child.logfile = TeeStdoutFile(log_file=self.log_file,
+            log_screen=self.log_screen)
+            #raise ValueError("Cannot use log_screen and log_file")
 
         try:
             index = self.child.expect(self.base_prompt_regex, 
