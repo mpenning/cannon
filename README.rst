@@ -9,7 +9,7 @@ Example Usage
 
 .. code:: python
 
-    from cannon.main import Shell, Account
+    from cannon import Shell, Account
 
     sess = Shell(
         host='route-views.oregon-ix.net',
@@ -18,8 +18,9 @@ Example Usage
         ),
 
         log_screen=False,
+        log_file="~/mylog.txt",
         auto_priv_mode=False,
-        debug=True,
+        debug=False,
         )
     sess.execute('term len 0')
     # template is a TextFSM template
