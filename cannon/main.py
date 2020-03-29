@@ -1,5 +1,6 @@
 from contextlib import closing
 from io import StringIO
+import platform
 import socket
 import time
 import sys
@@ -394,14 +395,24 @@ class Shell(transitions.Machine):
         if self.child is not None:
             self.child.close()
 
+        # Implement ssh or telnet command...
         if self.proto_dict['proto']=='ssh':
             _cmd = 'ssh -l {} -p {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no {}'.format(self.username, self.proto_dict['port'], self.host)
         elif self.proto_dict['proto']=='telnet':
             _cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
 
-        if self.log_file!='':
-            # Run a unix typescript session to capture ssh output...
+        # Implement log_file with script command...
+        if self.log_file!='' and platform.system().lower()=='linux':
+            # Run a **linux** typescript session to capture ssh output...
             cmd = """script -f -c '{0}' {1}""".format(_cmd, self.log_file)
+
+        elif self.log_file!='' and os.name=='posix':
+            # Run **Unix** typescript (has different options
+            cmd = """script -t 0 {0} {1}""".format(self.log_file, _cmd)
+
+        else:
+            raise ValueError('Unsupported platform: {}'.format(
+                platform.system()))
 
         # run the ssh or telnet command
         try:
