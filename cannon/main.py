@@ -395,9 +395,13 @@ class Shell(transitions.Machine):
             self.child.close()
 
         if self.proto_dict['proto']=='ssh':
-            cmd = 'ssh -l {} -p {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no {}'.format(self.username, self.proto_dict['port'], self.host)
+            _cmd = 'ssh -l {} -p {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no {}'.format(self.username, self.proto_dict['port'], self.host)
         elif self.proto_dict['proto']=='telnet':
-            cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
+            _cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
+
+        if self.log_file!='':
+            # Run a unix typescript session to capture ssh output...
+            cmd = """script -f -c '{0}' {1}""".format(_cmd, self.log_file)
 
         # run the ssh or telnet command
         try:
@@ -413,16 +417,8 @@ class Shell(transitions.Machine):
             time.sleep(70)
 
         # log to screen if requested
-        if self.log_screen and self.log_file=="":
+        if self.log_screen is True:
             self.child.logfile = sys.stdout
-
-        elif (self.log_screen is False) and self.log_file!="":
-            self.child.logfile = open(self.log_file, 'w')
-
-        elif (self.log_screen is True) and self.log_file!="":
-            self.child.logfile = TeeStdoutFile(log_file=self.log_file,
-            log_screen=self.log_screen)
-            #raise ValueError("Cannot use log_screen and log_file")
 
         try:
             index = self.child.expect(self.base_prompt_regex, 
