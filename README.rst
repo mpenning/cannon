@@ -22,7 +22,10 @@ Example Usage
         auto_priv_mode=False,
         debug=False,
         )
+
     sess.execute('term len 0')
+    sess.sync_prompt() # Manually sync prompts... sometimes this is reqd
+
     # template is a TextFSM template
     values = sess.execute('show ip int brief',
         template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")

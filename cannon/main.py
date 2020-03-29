@@ -339,6 +339,56 @@ class Shell(transitions.Machine):
         for cred in self.credentials:
             yield cred
 
+    def sync_prompt(self):
+        """Catch up with any queued prompts, we know to exit if we get a px.exceptions.TIMEOUT error"""
+
+        if self.debug:
+            print("\n   sync_prompt() - Catch up on queued prompts")
+
+        self.child.sendline('')
+
+        finished = False
+        while not finished:
+            index = -1
+            try:
+                index = self.child.expect(self.base_prompt_regex,
+                    timeout=1) # Use a very short timeout here
+
+                if self.debug:
+                    print("\n  sync_prompt() - self.child.expect() matched prompt index: {}".format(index))
+
+                if (index==0 or index==1):
+                    raise Exception("Unexpected prompt in sync_prompt()")
+                elif index==2:
+                    # We should only get to this prompt if auto_priv_mode is 
+                    #     False
+                    assert self.auto_priv_mode is False
+                    self.login_attempts = 0
+                elif index==3:
+                    # We should only get to this prompt if auto_priv_mode is 
+                    #     False
+                    assert self.auto_priv_mode is False
+                    self.login_attempts = 0
+                elif index==4:
+                    # We don't need to attempt any more logins if we have 
+                    #     a priv prompt
+                    self.login_attempts = 0
+
+            except px.exceptions.TIMEOUT:
+                assert index==-1
+                if self.debug:
+                    print("  px.exceptions.TIMEOUT")
+
+                self.login_attempts = 0
+                finished = True
+
+            except px.exceptions.EOF:
+                if self.debug:
+                    print("  px.exceptions.EOF")
+
+                self.login_attempts = 0
+                finished = True
+
     def after_SELECT_PROTOCOL_cb(self):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
 
@@ -397,22 +447,9 @@ class Shell(transitions.Machine):
 
         # Implement ssh or telnet command...
         if self.proto_dict['proto']=='ssh':
-            _cmd = 'ssh -l {} -p {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no {}'.format(self.username, self.proto_dict['port'], self.host)
+            cmd = 'ssh -l {} -p {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no {}'.format(self.username, self.proto_dict['port'], self.host)
         elif self.proto_dict['proto']=='telnet':
-            _cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
-
-        # Implement log_file with script command...
-        if self.log_file!='' and platform.system().lower()=='linux':
-            # Run a **linux** typescript session to capture ssh output...
-            cmd = """script -f -c '{0}' {1}""".format(_cmd, self.log_file)
-
-        elif self.log_file!='' and os.name=='posix':
-            # Run **Unix** typescript (has different options
-            cmd = """script -t 0 {0} {1}""".format(self.log_file, _cmd)
-
-        else:
-            raise ValueError('Unsupported platform: {}'.format(
-                platform.system()))
+            cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
 
         # run the ssh or telnet command
         try:
@@ -427,9 +464,20 @@ class Shell(transitions.Machine):
         except px.exceptions.EOF:
             time.sleep(70)
 
+
         # log to screen if requested
-        if self.log_screen is True:
-            self.child.logfile = sys.stdout
+        if self.log_screen and self.log_file=="":
+             self.child.logfile = sys.stdout
+
+        # log to file if requested
+        elif (self.log_screen is False) and self.log_file!="":
+            self.child.logfile = open(self.log_file, 'w')
+
+        # log to both screen and file if requested
+        elif (self.log_screen is True) and self.log_file!="":
+            self.child.logfile = TeeStdoutFile(log_file=self.log_file,
+            log_screen=self.log_screen)
+
 
         try:
             index = self.child.expect(self.base_prompt_regex, 
@@ -581,63 +629,7 @@ class Shell(transitions.Machine):
         if self.debug:
             print("Entering state: INTERACT")
 
-        #######################################################################
-        ## Confirm we are in the correct state (INTERACT)
-        #######################################################################
-        ## Catch up with any queued prompts, we know to exit if we get a 
-        ##   px.exceptions.TIMEOUT error
-        if self.debug:
-            print("\n   after_INTERACT_cb() - Catch up on queued prompts")
-
-        #self.child.send('\r') # FIXME
-        self.child.sendline('')
-
-        finished = False
-        while not finished:
-            index = -1
-            try:
-                # FIXME poo
-                #linux_prompt = '[\n\r]+.+?\$\s'
-                #self.base_prompt_regex = ['assword:', 'name:', '\s*[\n\r]+.+?>\s*', 
-                #    linux_prompt, '\s*[\n\r]+[^\n\r#]+?#\s*']
-
-                index = self.child.expect(self.base_prompt_regex,
-                    timeout=1) # Use a very short timeout here
-
-                if self.debug:
-                    print("\n  after_INTERACT_cb() - self.child.expect() matched prompt index: {}".format(index))
-
-                if (index==0 or index==1):
-                    raise Exception("Unexpected prompt in INTERACT state")
-                elif index==2:
-                    # We should only get to this prompt if auto_priv_mode is 
-                    #     False
-                    assert self.auto_priv_mode is False
-                    self.login_attempts = 0
-                elif index==3:
-                    # We should only get to this prompt if auto_priv_mode is 
-                    #     False
-                    assert self.auto_priv_mode is False
-                    self.login_attempts = 0
-                elif index==4:
-                    # We don't need to attempt any more logins if we have 
-                    #     a priv prompt
-                    self.login_attempts = 0
-
-            except px.exceptions.TIMEOUT:
-                assert index==-1
-                if self.debug:
-                    print("  px.exceptions.TIMEOUT")
-
-                self.login_attempts = 0
-                finished = True
-
-            except px.exceptions.EOF:
-                if self.debug:
-                    print("  px.exceptions.EOF")
-
-                self.login_attempts = 0
-                finished = True
+        self.sync_prompt()
 
 
 if __name__=='__main__':
