@@ -258,6 +258,9 @@ class Shell(transitions.Machine):
         else:
             self.child.send(cmd)
 
+        if float(wait)>0.0: # IMPORTANT: wait must be between send and expect()
+            time.sleep(wait)
+
         # Extend the list of cli_prompts if `prompts` was specified
         cli_prompts = self.base_prompt_regex
         if prompts!=():
@@ -286,8 +289,6 @@ class Shell(transitions.Machine):
                 print("  px.exception.EOF while executing '{}'".format(cmd))
             return None          # Force bypass of template response parsing
 
-        if float(wait)>0.0:
-            time.sleep(wait)
 
         ## If template is specified, parse the response into a list of dicts...
         if template is not None:
