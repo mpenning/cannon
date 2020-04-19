@@ -351,6 +351,9 @@ class Shell(transitions.Machine):
     def sync_prompt(self):
         """Catch up with any queued prompts, we know to exit if we get a px.exceptions.TIMEOUT error"""
 
+
+        self.detect_prompt()  # Detect prompt_str
+
         if self.debug:
             print("\n   sync_prompt() - Catch up on queued prompts")
 
@@ -397,8 +400,6 @@ class Shell(transitions.Machine):
 
                 self.login_attempts = 0
                 finished = True
-
-        self.detect_prompt()  # Detect prompt_str
 
     def detect_prompt(self):
         # Detect the prompt as best-possible...
