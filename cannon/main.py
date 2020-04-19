@@ -100,11 +100,13 @@ class Shell(transitions.Machine):
 
         self.prompt_str = ""    # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        linux_prompt = '[\n\r]+{}[^\r\n\$]*\$\s'.format(self.prompt_str)
+        linux_prompt = r'[\n\r]+{0}[^\r\n\$]*{1}\s'.format(self.prompt_str,
+            re.escape('$'))
         linux_prompt_capture = '([^\r\n\$]+)\s*$'
         self.base_prompt_regex = ['assword:', 'sername:', 
-            '[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
-            linux_prompt, '[\n\r]+{}[^\n\r#]*?#\s*'.format(self.prompt_str)]
+            r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
+            linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
+            self.prompt_str, re.escape('#'))]
 
         # Define regex capture groups for the prompts above...
         # NOTE there are no prompts in these strings..
@@ -252,6 +254,7 @@ class Shell(transitions.Machine):
                     arg.append('carriage_return={}'.format(carriage_return))
             logstr = ', '.join(arg)
             print('  execute("{}")'.format(logstr))
+            print('  waiting for prompts: "{}"'.format(self.base_prompt_regex))
 
         if carriage_return:
             self.child.sendline(cmd)
