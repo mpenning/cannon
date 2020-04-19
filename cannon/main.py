@@ -12,6 +12,7 @@ from textfsm import TextFSM
 import pexpect as px
 import transitions
 
+
 """Can't trigger event _go_LOGIN_SUCCESS_UNPRIV from state SEND_LOGIN_PASSWORD!"""
 
 class UnexpectedPrompt(Exception):
@@ -100,21 +101,15 @@ class Shell(transitions.Machine):
 
         self.prompt_str = ""    # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        linux_prompt = r'[\n\r]+{0}[^{1}]*?{1}\s'.format(self.prompt_str,
-            re.escape('$'))
-        linux_prompt_capture = '([^\r\n\$]+)\s*$'
-        self.base_prompt_regex = ['assword:', 'sername:', 
-            #r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
-            r'[\n\r]+{0}[^>]*?>'.format(self.prompt_str), 
-            #linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
-            linux_prompt, r'[\n\r]+{0}[^{1}]*?{1}'.format(
-            self.prompt_str, re.escape('#'))]
+        self.linux_prompt_capture = '([^\r\n{0}]+)\s*$'.format(re.escape('$'))
+        # Build the template before detecting prompt
+        self.base_prompt_regex = self.build_prompt_regex()
 
         # Define regex capture groups for the prompts above...
         # NOTE there are no prompts in these strings..
         self.base_prompt_regex_capture = [':', ':', 
-            '(\S[^\n\r>]+?)\s*$', linux_prompt_capture, 
-            '(\S[^\n\r#]+?)\s*$']
+            '(\S[^\n\r>]+?)\s*$', self.linux_prompt_capture, 
+            '(\S[^\n\r{0}]+?)\s*$'.format(re.escape('#'))]
 
         self.matching_prompt_regex = ""
         self.matching_prompt_regex_index = -1
@@ -411,12 +406,38 @@ class Shell(transitions.Machine):
         self.child.sendline('')
         index = self.child.expect([':', ':', '>', '\$', '#'],
             timeout=1) # Use a very short timeout here
-        candidate_prompt_str = self.child.before.strip()
+        candidate_prompt_list = self.child.before.strip().splitlines()
+        candidate_prompt_str = candidate_prompt_list[-1]
         mm = re.search(self.base_prompt_regex_capture[index],
             candidate_prompt_str)
         if mm is not None:
+            # We will regex-escape prompt_str in build_prompt_regex()
             self.prompt_str = mm.group(1)
+
+        if self.debug:
+            print("prompt_str: '{}'".format(self.prompt_str))
+
+        self.build_prompt_regex()  # Adjust the prompt regex after detection
+
         return self.prompt_str
+
+    def build_prompt_regex(self):
+        """Assign self.base_prompt_regex with the latest prompt info"""
+
+        self.linux_prompt = '[\n\r]+{0}[^{1}]*?{1}\s*'.format(re.escape(
+            self.prompt_str), re.escape('$'))
+
+        self.base_prompt_regex = ['assword:', 'sername:', 
+            #r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
+            '[\n\r]+{0}.*?>\s*'.format(re.escape(self.prompt_str)),
+            #linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
+            self.linux_prompt, '[\n\r]+{0}.*?{1}\s*'.format(
+            re.escape(self.prompt_str), re.escape('#'))]
+
+        if self.debug:
+            print("base_prompt_regex: {}".format(self.base_prompt_regex))
+
+        return self.base_prompt_regex
 
     def after_SELECT_PROTOCOL_cb(self):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
