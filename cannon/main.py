@@ -100,14 +100,14 @@ class Shell(transitions.Machine):
 
         self.prompt_str = ""    # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        linux_prompt = r'[\n\r]+{0}[^\r\n\$]*{1}\s'.format(self.prompt_str,
+        linux_prompt = r'[\n\r]+{0}[^{1}]*?{1}\s'.format(self.prompt_str,
             re.escape('$'))
         linux_prompt_capture = '([^\r\n\$]+)\s*$'
         self.base_prompt_regex = ['assword:', 'sername:', 
             #r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
-            r'[\n\r]+{0}[^\s]*?>'.format(self.prompt_str), 
+            r'[\n\r]+{0}[^>]*?>'.format(self.prompt_str), 
             #linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
-            linux_prompt, r'[\n\r]+{0}[^\s]*?{1}'.format(
+            linux_prompt, r'[\n\r]+{0}[^{1}]*?{1}'.format(
             self.prompt_str, re.escape('#'))]
 
         # Define regex capture groups for the prompts above...
