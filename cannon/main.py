@@ -98,14 +98,22 @@ class Shell(transitions.Machine):
         self.credentials_iterator = self.iter_credentials()
         self.proto_dict = {}
 
+        self.prompt_str = ""    # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        linux_prompt = '[\n\r]+[^\r\n\$]+\$\s'
-        # '[\n\r]+\S[^\n\r>]+?>\s*'  -> match > line that doesn't begin w/ space
-        # '[\n\r]+\S[^\n\r#]+?#\s*'  -> match # line that doesn't begin w/ space
-        self.base_prompt_regex = ['assword:', 'sername:', '[\n\r]+\S[^\n\r>]+?>\s*', 
-            linux_prompt, '[\n\r]+\S[^\n\r#]+?#\s*']
+        linux_prompt = '[\n\r]+{}[^\r\n\$]*\$\s'.format(self.prompt_str)
+        linux_prompt_capture = '([^\r\n\$]+)\s*$'
+        self.base_prompt_regex = ['assword:', 'sername:', 
+            '[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
+            linux_prompt, '[\n\r]+{}[^\n\r#]*?#\s*'.format(self.prompt_str)]
+
+        # Define regex capture groups for the prompts above...
+        # NOTE there are no prompts in these strings..
+        self.base_prompt_regex_capture = [':', ':', 
+            '(\S[^\n\r>]+?)\s*$', linux_prompt_capture, 
+            '(\S[^\n\r#]+?)\s*$']
 
         self.matching_prompt_regex = ""
+        self.matching_prompt_regex_index = -1
 
         #######################################################################
         ## Transitions to SELECT_PROTOCOL state
@@ -259,7 +267,8 @@ class Shell(transitions.Machine):
         # Look for prompt matches after executing the command
         try:
             index = self.child.expect(cli_prompts, timeout=command_timeout)
-            self.matching_prompt_regex = cli_prompts[index] # Set matching prompt
+            self.matching_prompt_regex_index = index       # Set matching index
+            self.matching_prompt_regex = cli_prompts[index]# Set matching prompt
             if self.debug:
                 print("  execute() - self.child.expect() matched prompt index={}".format(index))
 
@@ -388,6 +397,20 @@ class Shell(transitions.Machine):
 
                 self.login_attempts = 0
                 finished = True
+
+        self.detect_prompt()  # Detect prompt_str
+
+    def detect_prompt(self):
+        # Detect the prompt as best-possible...
+        self.child.sendline('')
+        index = self.child.expect([':', ':', '>', '\$', '#'],
+            timeout=1) # Use a very short timeout here
+        candidate_prompt_str = self.child.before.strip()
+        mm = re.search(self.base_prompt_regex_capture[index],
+            candidate_prompt_str)
+        if mm is not None:
+            self.prompt_str = mm.group(1)
+        return self.prompt_str
 
     def after_SELECT_PROTOCOL_cb(self):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
