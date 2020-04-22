@@ -8,6 +8,7 @@ import re
 import os
 assert sys.version_info>=(3,0), "cannon does not support Python 2"
 
+from rich import print as rich_print
 from textfsm import TextFSM
 import pexpect as px
 import transitions
@@ -150,11 +151,21 @@ class Shell(transitions.Machine):
             source='CONNECT', dest='SEND_LOGIN_USERNAME',
             after='after_SEND_LOGIN_USERNAME_cb')
 
+        # In case we got to interact prematurely...
+        self.add_transition(trigger='_go_SEND_LOGIN_USERNAME', 
+            source='INTERACT', dest='SEND_LOGIN_USERNAME',
+            after='after_SEND_LOGIN_USERNAME_cb')
+
         #######################################################################
         ## Transitions to SEND_LOGIN_PASSWORD state
         #######################################################################
         self.add_transition(trigger='_go_SEND_LOGIN_PASSWORD', 
             source='CONNECT', dest='SEND_LOGIN_PASSWORD',
+            after='after_SEND_LOGIN_PASSWORD_cb')
+
+        # In case we got to interact prematurely...
+        self.add_transition(trigger='_go_SEND_LOGIN_PASSWORD', 
+            source='INTERACT', dest='SEND_LOGIN_PASSWORD',
             after='after_SEND_LOGIN_PASSWORD_cb')
 
         #######################################################################
@@ -250,8 +261,8 @@ class Shell(transitions.Machine):
                 elif ii=='carriage_return':
                     arg.append('carriage_return={}'.format(carriage_return))
             logstr = ', '.join(arg)
-            print('  execute("{}")'.format(logstr))
-            print('  waiting for prompts: "{}"'.format(self.base_prompt_regex))
+            rich_print('  [bold blue]execute([/bold blue]"{}"[bold blue])[/bold blue]'.format(logstr))
+            rich_print('  [bold blue]waiting for prompts:[/bold blue] "{}"'.format(self.base_prompt_regex))
 
         if carriage_return:
             self.child.sendline(cmd)
@@ -273,20 +284,20 @@ class Shell(transitions.Machine):
             self.matching_prompt_regex_index = index       # Set matching index
             self.matching_prompt_regex = cli_prompts[index]# Set matching prompt
             if self.debug:
-                print("  execute() - self.child.expect() matched prompt index={}".format(index))
+                rich_print("  [bold blue]execute() - self.child.expect() matched prompt index=[/bold blue]{}".format(index))
 
         except px.exceptions.TIMEOUT:
             # FIXME... I commented this out
             #self._go_INTERACT() # Catch up on queued prompts
             if self.debug:
-                print("  px.exception.TIMEOUT while executing '{}'".format(cmd))
+                rich_print("  [bold red]px.exception.TIMEOUT while executing[/bold red] '{}'".format(cmd))
             return None          # Force bypass of template response parsing
 
         except px.exceptions.EOF:
             # FIXME... I commented this out
             #self._go_INTERACT() # Catch up on queued prompts
             if self.debug:
-                print("  px.exception.EOF while executing '{}'".format(cmd))
+                rich_print("  [bold red]px.exception.EOF while executing[/bold red] '{}'".format(cmd))
             return None          # Force bypass of template response parsing
 
 
@@ -352,11 +363,10 @@ class Shell(transitions.Machine):
     def sync_prompt(self):
         """Catch up with any queued prompts, we know to exit if we get a px.exceptions.TIMEOUT error"""
 
-
         self.detect_prompt()  # Detect prompt_str
 
         if self.debug:
-            print("\n   sync_prompt() - Catch up on queued prompts")
+            rich_print("\n   [bold blue]sync_prompt() - Catch up on queued prompts[/bold blue]")
 
         self.child.sendline('')
 
@@ -368,7 +378,7 @@ class Shell(transitions.Machine):
                     timeout=1) # Use a very short timeout here
 
                 if self.debug:
-                    print("\n  sync_prompt() - self.child.expect() matched prompt index: {}".format(index))
+                    rich_print("\n  [bold blue]sync_prompt() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
                 if (index==0 or index==1):
                     raise Exception("Unexpected prompt in sync_prompt()")
@@ -390,20 +400,35 @@ class Shell(transitions.Machine):
             except px.exceptions.TIMEOUT:
                 assert index==-1
                 if self.debug:
-                    print("  px.exceptions.TIMEOUT")
+                    rich_print("  [bold red]px.exceptions.TIMEOUT[/bold red]")
 
                 self.login_attempts = 0
                 finished = True
 
             except px.exceptions.EOF:
                 if self.debug:
-                    print("  px.exceptions.EOF")
+                    rich_print("  [bold red]px.exceptions.EOF[bold red]")
 
                 self.login_attempts = 0
                 finished = True
 
     def detect_prompt(self):
         # Detect the prompt as best-possible...
+
+        # Double check that this isn't a pre-login banner...
+        finished = False
+        while not finished:
+            try:
+                index = self.child.expect(['sername:', 'assword:', '>', '\$', 
+                    '#'], timeout=1) # Use a very short timeout here
+                if index==0:
+                    # We went to detect_prompt() based on some banner
+                    self._go_SEND_LOGIN_USERNAME()
+                elif index==1:
+                    # We went to detect_prompt() based on some banner
+                    self._go_SEND_LOGIN_PASSWORD()
+            except px.exceptions.TIMEOUT:
+                finished = True
         self.child.sendline('')
         index = self.child.expect([':', ':', '>', '\$', '#'],
             timeout=1) # Use a very short timeout here
@@ -416,7 +441,7 @@ class Shell(transitions.Machine):
             self.prompt_str = mm.group(1)
 
         if self.debug:
-            print("prompt_str: '{}'".format(self.prompt_str))
+            rich_print("[bold blue]prompt_str:[/bold blue] '{}'".format(self.prompt_str))
 
         self.build_prompt_regex()  # Adjust the prompt regex after detection
 
@@ -436,7 +461,7 @@ class Shell(transitions.Machine):
             re.escape(self.prompt_str), re.escape('#'))]
 
         if self.debug:
-            print("base_prompt_regex: {}".format(self.base_prompt_regex))
+            rich_print("    [bold blue]base_prompt_regex:[/bold blue] {}".format(self.base_prompt_regex))
 
         return self.base_prompt_regex
 
@@ -444,7 +469,7 @@ class Shell(transitions.Machine):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
 
         if self.debug:
-            print("Entering state: SELECT_PROTOCOL")
+            rich_print("[bold blue]Entering state: SELECT_PROTOCOL[/bold blue]")
 
         finished = False
         for ii in range(0, 3):
@@ -473,7 +498,7 @@ class Shell(transitions.Machine):
     def after_SELECT_LOGIN_CREDENTIALS_cb(self):
 
         if self.debug:
-            print("Entering state: SELECT_LOGIN_CREDENTIALS")
+            print("[bold blue]Entering state: SELECT_LOGIN_CREDENTIALS[bold blue]")
 
         while self.login_attempts>=0:
             cred = next(self.credentials_iterator)
@@ -491,7 +516,7 @@ class Shell(transitions.Machine):
         """Build an ssh / telnet session to self.host"""
 
         if self.debug:
-            print("Entering state: CONNECT")
+            rich_print("[bold blue]Entering state: CONNECT[/bold blue]")
 
         if self.child is not None:
             self.child.close()
@@ -505,7 +530,7 @@ class Shell(transitions.Machine):
         # run the ssh or telnet command
         try:
             if self.debug:
-                print("  pexpect.spawn('{}')".format(cmd))
+                rich_print("  [bold blue]pexpect.spawn([/bold blue]'{}'[bold blue])[/bold blue]".format(cmd))
             self.child = px.spawn(cmd, timeout=self.login_timeout,
                 encoding=self.encoding)
 
@@ -535,7 +560,7 @@ class Shell(transitions.Machine):
                 timeout=self.login_timeout)
 
             if self.debug:
-                print("   after_CONNECT_cb() - self.child.expect() matched prompt index: {}".format(index))
+                rich_print("   [bold blue]after_CONNECT_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
             if index==0:
                 self._go_SEND_LOGIN_PASSWORD()
@@ -554,7 +579,7 @@ class Shell(transitions.Machine):
     def after_SEND_LOGIN_PASSWORD_cb(self):
 
         if self.debug:
-            print("Entering state: SEND_LOGIN_PASSWORD")
+            rich_print("[bold blue]Entering state: SEND_LOGIN_PASSWORD[/bold blue]")
 
         self.child.sendline(self.password)
 
@@ -563,7 +588,7 @@ class Shell(transitions.Machine):
                 timeout=self.login_timeout)
 
             if self.debug:
-                print("\n   after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matched prompt index: {}".format(index))
+                rich_print("\n   [bold blue]after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
             if index==0:  # This was the wrong password
                 self.child.close()
@@ -582,20 +607,20 @@ class Shell(transitions.Machine):
 
         except px.exceptions.EOF:
             if self.debug:
-                print("   after_SEND_LOGIN_PASSWORD_cb() - pexpect.exceptions.EOF error")
+                rich_print("   [bold red]after_SEND_LOGIN_PASSWORD_cb() - pexpect.exceptions.EOF error[/bold red]")
             self.child.close()
             self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
 
         except px.exceptions.TIMEOUT:
             if self.debug:
-                print("   after_SEND_LOGIN_PASSWORD_cb() - pexpect error: TIMEOUT")
+                rich_print("   [bold red]after_SEND_LOGIN_PASSWORD_cb() - pexpect error: TIMEOUT[/bold red]")
             self.child.close()
             self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
 
     def after_SEND_LOGIN_USERNAME_cb(self):
 
         if self.debug:
-            print("Entering state: SEND_LOGIN_USERNAME")
+            rich_print("[bold blue]Entering state: SEND_LOGIN_USERNAME[/bold blue]")
 
         self.child.sendline(self.username)
 
@@ -603,7 +628,7 @@ class Shell(transitions.Machine):
             timeout=self.login_timeout)
 
         if self.debug:
-            print("   after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matched prompt index: {}".format(index))
+            rich_print("   [bold blue]after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
         if index==0:
             self._go_SEND_LOGIN_PASSWORD()
@@ -619,7 +644,7 @@ class Shell(transitions.Machine):
     def after_LOGIN_SUCCESS_UNPRIV_cb(self):
 
         if self.debug:
-            print("Entering state: LOGIN_SUCCESS_UNPRIV")
+            rich_print("[bold blue]Entering state: LOGIN_SUCCESS_UNPRIV[/bold blue]")
 
         if self.auto_priv_mode is True:
             self.child.sendline('enable')
@@ -628,7 +653,7 @@ class Shell(transitions.Machine):
                 timeout=self.command_timeout)
 
             if self.debug:
-                print("   after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matched prompt index: {}".format(index))
+                rich_print("   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
             if index==0:
                 self._go_SEND_PRIV_PASSWORD()
@@ -646,7 +671,7 @@ class Shell(transitions.Machine):
     def after_SEND_PRIV_PASSWORD_cb(self):
 
         if self.debug:
-            print("Entering state: SEND_PRIV_PASSWORD")
+            rich_print("[bold blue]Entering state: SEND_PRIV_PASSWORD[/bold blue]")
 
         self.child.sendline(self.password)
 
@@ -654,7 +679,7 @@ class Shell(transitions.Machine):
             timeout=self.command_timeout)
 
         if self.debug:
-            print("   after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matched prompt index: {}".format(index))
+            rich_print("   [bold blue]after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
         if index==0:
             self._go_SEND_PRIV_PASSWORD()
@@ -670,15 +695,14 @@ class Shell(transitions.Machine):
     def after_LOGIN_SUCCESS_PRIV_cb(self):
 
         if self.debug:
-            print("Entering state: LOGIN_SUCCESS_PRIV")
-
+            rich_print("[bold blue]Entering state: LOGIN_SUCCESS_PRIV[/bold blue]")
         self._go_INTERACT()
 
     def after_INTERACT_cb(self):
         """Catch up on any queued command prompts and prepare for user to interact"""
 
         if self.debug:
-            print("Entering state: INTERACT")
+            rich_print("[bold blue]Entering state: INTERACT[/bold blue]")
 
         self.sync_prompt()
 
