@@ -19,7 +19,12 @@ import transitions
 class UnexpectedPrompt(Exception):
     """Exception for an Unexpected Prompt"""
     def __init__(self):
-        super(UnexpectedStateTransition, self)
+        super(UnexpectedPrompt, self)
+
+class PromptDetectionError(Exception):
+    """Exception for an Unexpected Prompt"""
+    def __init__(self):
+        super(PromptDetectionError, self)
 
 class TeeStdoutFile(object):
     def __init__(self, log_file="", filemode="w", log_screen=False):
@@ -221,13 +226,12 @@ class Shell(transitions.Machine):
         #######################################################################
         self._go_SELECT_PROTOCOL()
 
-    def execute(self, cmd=None, template=None, wait=0.0, prompts=(),
+    def execute(self, cmd=None, template=None, prompts=(),
         command_timeout=0.0, carriage_return=True):
         """Run a command and optionally parse with a TextFSM template
 
             - `cmd` is the command to execute
             - `template` is a string with the text of the TextFSM template
-            - `wait` is a built-in sleep delay after running the command
             - `prompts` is a tuple of prompt regexs to apply to the output of the command
             - `command_timeout` is how long we should wait for the command prompt to return
             - `carriage_return` indicates whether the command should be followed with a carriage-return.  The values are either True or False (default is True, meaning the CR will be sent after the command).
@@ -240,7 +244,7 @@ class Shell(transitions.Machine):
         if command_timeout==0.0:
             command_timeout = self.command_timeout
 
-        arg_list = ('cmd', 'wait', 'template', 'prompts', 'command_timeout',
+        arg_list = ('cmd', 'template', 'prompts', 'command_timeout',
             'carriage_return')
         arg = list()
         if self.debug:
@@ -248,8 +252,6 @@ class Shell(transitions.Machine):
             for ii in arg_list:
                 if ii=='cmd':
                     arg.append("'"+cmd+"'")
-                elif ii=='wait':
-                    arg.append('wait={}'.format(wait))
                 elif ii=='template' and template is not None:
                     arg.append('template=TRUNCATED'.format(template))
                 elif ii=='template' and template is None:
@@ -261,16 +263,12 @@ class Shell(transitions.Machine):
                 elif ii=='carriage_return':
                     arg.append('carriage_return={}'.format(carriage_return))
             logstr = ', '.join(arg)
-            rich_print('  [bold blue]execute([/bold blue]"{}"[bold blue])[/bold blue]'.format(logstr))
-            rich_print('  [bold blue]waiting for prompts:[/bold blue] "{}"'.format(self.base_prompt_regex))
+            rich_print('[bold blue]execute([/bold blue][bold green]{}[/bold green][bold blue])[/bold blue]'.format(logstr))
 
         if carriage_return:
             self.child.sendline(cmd)
         else:
             self.child.send(cmd)
-
-        if float(wait)>0.0: # IMPORTANT: wait must be between send and expect()
-            time.sleep(wait)
 
         # Extend the list of cli_prompts if `prompts` was specified
         cli_prompts = self.base_prompt_regex
@@ -279,25 +277,29 @@ class Shell(transitions.Machine):
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
 
         # Look for prompt matches after executing the command
+        if self.debug:
+            rich_print('    [bold blue]Looking for prompts:[/bold blue] "{}"'.format(self.base_prompt_regex))
+            rich_print('    [bold blue]Timeout:[/bold blue] "{}"'.format(
+                command_timeout))
         try:
             index = self.child.expect(cli_prompts, timeout=command_timeout)
             self.matching_prompt_regex_index = index       # Set matching index
             self.matching_prompt_regex = cli_prompts[index]# Set matching prompt
             if self.debug:
-                rich_print("  [bold blue]execute() - self.child.expect() matched prompt index=[/bold blue]{}".format(index))
+                rich_print("    [bold blue]execute() - self.child.expect() matched prompt index=[/bold blue]{}".format(index))
 
         except px.exceptions.TIMEOUT:
             # FIXME... I commented this out
             #self._go_INTERACT() # Catch up on queued prompts
             if self.debug:
-                rich_print("  [bold red]px.exception.TIMEOUT while executing[/bold red] '{}'".format(cmd))
+                rich_print("    [bold red]px.exception.TIMEOUT while executing[/bold red] '{}'".format(cmd))
             return None          # Force bypass of template response parsing
 
         except px.exceptions.EOF:
             # FIXME... I commented this out
             #self._go_INTERACT() # Catch up on queued prompts
             if self.debug:
-                rich_print("  [bold red]px.exception.EOF while executing[/bold red] '{}'".format(cmd))
+                rich_print("    [bold red]px.exception.EOF while executing[/bold red] '{}'".format(cmd))
             return None          # Force bypass of template response parsing
 
 
@@ -362,11 +364,14 @@ class Shell(transitions.Machine):
 
     def sync_prompt(self):
         """Catch up with any queued prompts, we know to exit if we get a px.exceptions.TIMEOUT error"""
-
-        self.detect_prompt()  # Detect prompt_str
-
         if self.debug:
-            rich_print("\n   [bold blue]sync_prompt() - Catch up on queued prompts[/bold blue]")
+            rich_print("[bold blue]Entering sync_prompt()[/bold blue]")
+
+        # self.detect_prompt() **must** come before self.sync_prompt()
+        try:
+            assert self.prompt_str!=""
+        except AssertionError:
+            raise PromptDetectionError("detect_prompt() must run before sync_prompt()")
 
         self.child.sendline('')
 
@@ -382,6 +387,7 @@ class Shell(transitions.Machine):
 
                 if (index==0 or index==1):
                     raise Exception("Unexpected prompt in sync_prompt()")
+
                 elif index==2:
                     # We should only get to this prompt if auto_priv_mode is 
                     #     False
@@ -413,8 +419,11 @@ class Shell(transitions.Machine):
                 finished = True
 
     def detect_prompt(self):
+        """detect_prompt() checks for premature entry into INTERACT and also looks for a prompt string"""
         # Detect the prompt as best-possible...
 
+        if self.debug:
+            rich_print("[bold blue]Entering detect_prompt()[/bold blue]")
         # Double check that this isn't a pre-login banner...
         finished = False
         while not finished:
@@ -423,12 +432,19 @@ class Shell(transitions.Machine):
                     '#'], timeout=1) # Use a very short timeout here
                 if index==0:
                     # We went to detect_prompt() based on some banner
+                    if self.debug:
+                        rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_USERNAME[/bold blue]")
                     self._go_SEND_LOGIN_USERNAME()
                 elif index==1:
                     # We went to detect_prompt() based on some banner
+                    if self.debug:
+                        rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_PASSWORD[/bold blue]")
                     self._go_SEND_LOGIN_PASSWORD()
             except px.exceptions.TIMEOUT:
                 finished = True
+
+        if self.debug:
+            rich_print("    [bold blue]detect_prompt() using prompt detection heuristics[/bold blue]")
         self.child.sendline('')
         index = self.child.expect([':', ':', '>', '\$', '#'],
             timeout=1) # Use a very short timeout here
@@ -441,7 +457,7 @@ class Shell(transitions.Machine):
             self.prompt_str = mm.group(1)
 
         if self.debug:
-            rich_print("[bold blue]prompt_str:[/bold blue] '{}'".format(self.prompt_str))
+            rich_print("\n    [bold blue]detect_prompt() found prompt_str:[/bold blue] '{}'".format(self.prompt_str))
 
         self.build_prompt_regex()  # Adjust the prompt regex after detection
 
@@ -469,7 +485,8 @@ class Shell(transitions.Machine):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
 
         if self.debug:
-            rich_print("[bold blue]Entering state: SELECT_PROTOCOL[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         finished = False
         for ii in range(0, 3):
@@ -498,7 +515,8 @@ class Shell(transitions.Machine):
     def after_SELECT_LOGIN_CREDENTIALS_cb(self):
 
         if self.debug:
-            print("[bold blue]Entering state: SELECT_LOGIN_CREDENTIALS[bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         while self.login_attempts>=0:
             cred = next(self.credentials_iterator)
@@ -516,7 +534,8 @@ class Shell(transitions.Machine):
         """Build an ssh / telnet session to self.host"""
 
         if self.debug:
-            rich_print("[bold blue]Entering state: CONNECT[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         if self.child is not None:
             self.child.close()
@@ -579,7 +598,8 @@ class Shell(transitions.Machine):
     def after_SEND_LOGIN_PASSWORD_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: SEND_LOGIN_PASSWORD[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         self.child.sendline(self.password)
 
@@ -620,7 +640,8 @@ class Shell(transitions.Machine):
     def after_SEND_LOGIN_USERNAME_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: SEND_LOGIN_USERNAME[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         self.child.sendline(self.username)
 
@@ -644,7 +665,8 @@ class Shell(transitions.Machine):
     def after_LOGIN_SUCCESS_UNPRIV_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: LOGIN_SUCCESS_UNPRIV[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         if self.auto_priv_mode is True:
             self.child.sendline('enable')
@@ -671,7 +693,8 @@ class Shell(transitions.Machine):
     def after_SEND_PRIV_PASSWORD_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: SEND_PRIV_PASSWORD[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
         self.child.sendline(self.password)
 
@@ -695,15 +718,19 @@ class Shell(transitions.Machine):
     def after_LOGIN_SUCCESS_PRIV_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: LOGIN_SUCCESS_PRIV[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
+
         self._go_INTERACT()
 
     def after_INTERACT_cb(self):
         """Catch up on any queued command prompts and prepare for user to interact"""
 
         if self.debug:
-            rich_print("[bold blue]Entering state: INTERACT[/bold blue]")
+            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                self.state))
 
+        self.detect_prompt()  # detect_prompt() *must* come before sync_prompt()
         self.sync_prompt()
 
 
