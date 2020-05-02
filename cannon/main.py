@@ -68,9 +68,6 @@ class Account(object):
         self.priv_passwd = priv_passwd
         self.ssh_key = os.path.expanduser(ssh_key) # Path to ssh private key
 
-        if passwd=="" and ssh_key=="":
-            raise ValueError("Cannot buid account for {} without a password or ssh key".format(user))
-
     def __repr__(self):
         return """<Account user:{} passwd:{} priv_passwd:{} ssh_key: {}>""".format(self.user, self.passwd, self.priv_passwd, self.ssh_key)
 
@@ -113,7 +110,8 @@ class Shell(transitions.Machine):
 
         self.prompt_str = ""    # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        self.linux_prompt_capture = '([^\r\n{0}]+)\s*$'.format(re.escape('$'))
+        #self.linux_prompt_capture = '([^\r\n{0}]+)\s*$'.format(re.escape('$'))
+        self.linux_prompt_capture = '[\r\n]*[^\r\n{0}]+\s*$'.format(re.escape('$'))
         # Build the template before detecting prompt
         self.base_prompt_regex = self.build_prompt_regex()
 
@@ -272,51 +270,29 @@ class Shell(transitions.Machine):
             rich_print('[bold blue]execute([/bold blue][bold green]{}[/bold green][bold blue])[/bold blue]'.format(logstr))
 
         if carriage_return:
-            self.child.sendline(cmd)
+            self.csendline(cmd)
         else:
             self.child.send(cmd)
 
         # Extend the list of cli_prompts if `prompts` was specified
         cli_prompts = self.base_prompt_regex
-        cli_prompts.insert(0, '.+?assword.*?:') # Ensure we match sudo first...
+        # Ensure we match sudo first... this regex is tricky to get right...
+        cli_prompts.insert(0, '[Pp]assword[^\r\n]{0,20}?:')
         if prompts!=():
             assert isinstance(prompts, tuple)
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
 
         # Look for prompt matches after executing the command
-        if self.debug:
-            rich_print('    [bold blue]Looking for prompts:[/bold blue] "{}"'.format(self.base_prompt_regex))
-            rich_print('    [bold blue]Timeout:[/bold blue] "{}"'.format(
-                command_timeout))
-        try:
-            index = self.child.expect(cli_prompts, timeout=command_timeout)
-            self.matching_prompt_regex_index = index       # Set matching index
-            self.matching_prompt_regex = cli_prompts[index]# Set matching prompt
-            if self.debug:
-                rich_print("    [bold blue]execute() - self.child.expect() matched prompt index=[/bold blue]{}".format(index))
+        index = self.cexpect(cli_prompts, timeout=command_timeout)
 
-            # Handle sudo password prompt...
-            if index==0:  # a password prompt
-                if self.debug:
-                    rich_print("    [bold blue]Responding to password prompt:[/bold blue] [bold yellow]'{}'[/bold yellow]".format(
-                        self.child.after.splitlines()[-1]))
-                assert self.password!="", "Cannot sudo with no password"
-                self.child.sendline(self.password)
-                index = self.child.expect(cli_prompts, timeout=command_timeout)
-
-        except px.exceptions.TIMEOUT:
-            # FIXME... I commented this out
-            #self._go_INTERACT() # Catch up on queued prompts
+        # Handle sudo password prompt...
+        if index==0:  # a password prompt
             if self.debug:
-                rich_print("    [bold red]px.exception.TIMEOUT while executing[/bold red] '{}'".format(cmd))
-            return None          # Force bypass of template response parsing
-
-        except px.exceptions.EOF:
-            # FIXME... I commented this out
-            #self._go_INTERACT() # Catch up on queued prompts
-            if self.debug:
-                rich_print("    [bold red]px.exception.EOF while executing[/bold red] '{}'".format(cmd))
-            return None          # Force bypass of template response parsing
+                rich_print("    [bold blue]Responding to password prompt:[/bold blue] [bold yellow]'{}'[/bold yellow]".format(
+                    self.child.after.splitlines()[-1]))
+            assert self.password!="", "Hit a password prompt without a password"
+            self.csendline(self.password)
+            index = self.cexpect(cli_prompts, timeout=command_timeout)
 
 
         ## If template is specified, parse the response into a list of dicts...
@@ -357,6 +333,52 @@ class Shell(transitions.Machine):
         else:
             return None
 
+    def csendline(self, text):
+        assert self.child.isalive()
+        if self.debug:
+            rich_print("    [bold blue]csendline('{}')[/bold blue]".format(
+                text))
+            rich_print("    [bold blue]---------[/bold blue]")
+        self.child.sendline(text)
+
+    def cexpect(self, pattern_list, timeout=-1):
+        assert self.child.isalive()
+        if self.debug:
+            rich_print("    [bold blue]cexpect([/bold blue][bold green]pattern_list, timeout={}[/bold green][bold blue])[/bold blue]".format(timeout))
+        now = time.time()
+        try:
+            match_index = self.child.expect(pattern_list, timeout=timeout)
+            if self.debug:
+                delta_secs = round(time.time()-now, 4)
+                rich_print("\n      [bold blue]^^ cexpect() matched pattern_list index={}[/bold blue]".format(match_index))
+                rich_print("\n      [bold blue]^^ cexpect() matched regex={}[/bold blue]".format(repr(pattern_list[match_index])))
+                rich_print("      [bold blue]^^ cexpect() matching_prompt='{}'[/bold blue]".format(self.matching_prompt))
+                rich_print("      [bold blue]^^ cexpect() match time: {} seconds[/bold blue]".format(delta_secs))
+
+            self.matching_prompt_regex_index = match_index
+            self.matching_prompt_regex = pattern_list[match_index]
+
+        except px.exceptions.EOF:
+            if self.debug:
+                rich_print("      [bold red]EOF exception[/bold red]")
+            match_index = -1
+
+        except px.exceptions.TIMEOUT:
+            if self.debug:
+                rich_print("      [bold red]TIMEOUT exception[/bold red]")
+            match_index = -1
+
+        return match_index
+
+    @property
+    def matching_prompt(self):
+        """Derive the matching prompt string (what matched the regex)"""
+        after = self.child.after
+        prompt_str = after.splitlines()[-1]
+        if self.debug:
+            rich_print("[bold blue]matching_prompt(): '{}'[/bold blue]".format(prompt_str))
+        return prompt_str
+
     @property
     def response(self):
         return self.child.before
@@ -393,50 +415,35 @@ class Shell(transitions.Machine):
         except AssertionError:
             raise PromptDetectionError("detect_prompt() must run before sync_prompt()")
 
-        self.child.sendline('')
+        self.csendline('')
 
         finished = False
         while not finished:
-            index = -1
-            try:
-                index = self.child.expect(self.base_prompt_regex,
-                    timeout=1) # Use a very short timeout here
+            # Use a very short timeout here...
+            index = self.cexpect(self.base_prompt_regex, timeout=1)
 
-                if self.debug:
-                    rich_print("\n  [bold blue]sync_prompt() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
-
-                if (index==0 or index==1):
-                    raise Exception("Unexpected prompt in sync_prompt()")
-
-                elif index==2:
-                    # We should only get to this prompt if auto_priv_mode is 
-                    #     False
-                    assert self.auto_priv_mode is False
-                    self.login_attempts = 0
-                elif index==3:
-                    # We should only get to this prompt if auto_priv_mode is 
-                    #     False
-                    assert self.auto_priv_mode is False
-                    self.login_attempts = 0
-                elif index==4:
-                    # We don't need to attempt any more logins if we have 
-                    #     a priv prompt
-                    self.login_attempts = 0
-
-            except px.exceptions.TIMEOUT:
-                assert index==-1
-                if self.debug:
-                    rich_print("  [bold red]px.exceptions.TIMEOUT[/bold red]")
-
+            if index==-1:
+                # We got an EOF or TIMEOUT error...
                 self.login_attempts = 0
                 finished = True
 
-            except px.exceptions.EOF:
-                if self.debug:
-                    rich_print("  [bold red]px.exceptions.EOF[bold red]")
+            elif (index==0 or index==1):
+                raise Exception("Unexpected prompt in sync_prompt()")
 
+            elif index==2:
+                # We should only get to this prompt if auto_priv_mode is 
+                #     False
+                assert self.auto_priv_mode is False
                 self.login_attempts = 0
-                finished = True
+            elif index==3:
+                # We should only get to this prompt if auto_priv_mode is 
+                #     False
+                assert self.auto_priv_mode is False
+                self.login_attempts = 0
+            elif index==4:
+                # We don't need to attempt any more logins if we have 
+                #     a priv prompt
+                self.login_attempts = 0
 
     def detect_prompt(self):
         """detect_prompt() checks for premature entry into INTERACT and also looks for a prompt string"""
@@ -450,47 +457,40 @@ class Shell(transitions.Machine):
         # Double check that this isn't a pre-login banner...
         finished = False
         while not finished:
-            try:
-                # Use a very short timeout here...
-                index = self.child.expect(abbv_prompt_list, timeout=1)
-                if index==0:
-                    # We went to detect_prompt() based on some banner
-                    if self.debug:
-                        rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_USERNAME[/bold blue]")
-                    self._go_SEND_LOGIN_USERNAME()
-                elif index==1:
-                    # We went to detect_prompt() based on some banner
-                    if self.debug:
-                        rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_PASSWORD[/bold blue]")
-                    self._go_SEND_LOGIN_PASSWORD()
-                ## FIXME I might have to delete this case...
-                elif index>1:
-                    finished = True
-            except px.exceptions.TIMEOUT:
+            # Use a very short timeout here...
+            index = self.cexpect(abbv_prompt_list, timeout=1)
+            if index==-1:
                 if self.debug:
                     rich_print("[bold blue]    detect_prompt() TIMEOUT condition 1[/bold blue]")
                 finished = True
+            elif index==0:
+                # We probably went to detect_prompt() based on some banner
+                # This should be a username prompt...
+                if self.debug:
+                    rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_USERNAME[/bold blue]")
+                self._go_SEND_LOGIN_USERNAME()
+            elif index==1:
+                # We probably went to detect_prompt() based on some banner
+                # This should be a password prompt...
+                if self.debug:
+                    rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_PASSWORD[/bold blue]")
+                self._go_SEND_LOGIN_PASSWORD()
+
+            ## FIXME I might have to delete this case... probably breaks junos
+            ## with a login banner (using hash characters)
+
+            ## GUACAMOLE
+            #elif index>1:
+            #    finished = True
 
         if self.debug:
             rich_print("\n    [bold blue]detect_prompt() using prompt detection heuristics[/bold blue]")
-        self.child.sendline('')
+        self.csendline('')
         # Use a very short timeout here
-        index = self.child.expect(abbv_prompt_list, timeout=1)
+        index = self.cexpect(abbv_prompt_list, timeout=1)
+        self.prompt_str = self.child.before.strip().splitlines()[-1]
         if self.debug:
-            rich_print("\n    [bold blue]Triggering on prompt: {}[/bold blue]".format(abbv_prompt_list[index]))
-        candidate_prompt_list = self.child.before.strip().splitlines()
-        if self.debug:
-            rich_print("\n    [bold blue]len(candidate_prompt_list): {}[/bold blue]".format(len(candidate_prompt_list)))
-            rich_print("\n    [bold blue]candidate_prompt_list:[/bold blue]")
-            rich_print("\n    [bold blue]{}[/bold blue]".format(str(candidate_prompt_list)))
-        candidate_prompt_str = candidate_prompt_list[-1]
-        mm = re.search(self.base_prompt_regex_capture[index],
-            candidate_prompt_str)
-        if mm is not None:
-            # We will regex-escape prompt_str in build_prompt_regex()
-            self.prompt_str = mm.group(1)
-            if self.debug:
-                rich_print("\n    [bold blue]detect_prompt() found prompt_str:[/bold blue] '{}'".format(self.prompt_str))
+            rich_print("\n    [bold blue]detect_prompt() found prompt_str:[/bold blue] '{}'".format(self.prompt_str))
 
         self.build_prompt_regex()  # Adjust the prompt regex after detection
 
@@ -498,6 +498,10 @@ class Shell(transitions.Machine):
 
     def build_prompt_regex(self):
         """Assign self.base_prompt_regex with the latest prompt info"""
+        if self.debug:
+            rich_print("[bold blue]build_prompt_regex() called[/bold blue]")
+            rich_print("    [bold blue]self.prompt_str='{}'[/bold blue]".format(
+                self.prompt_str))
 
         self.linux_prompt = '[\n\r]+{0}[^{1}]*?{1}\s*'.format(re.escape(
             self.prompt_str), re.escape('$'))
@@ -508,9 +512,6 @@ class Shell(transitions.Machine):
             #linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
             self.linux_prompt, '[\n\r]+{0}.*?{1}\s*'.format(
             re.escape(self.prompt_str), re.escape('#'))]
-
-        if self.debug:
-            rich_print("    [bold blue]base_prompt_regex:[/bold blue] {}".format(self.base_prompt_regex))
 
         return self.base_prompt_regex
 
@@ -620,26 +621,25 @@ class Shell(transitions.Machine):
             self.child.logfile = TeeStdoutFile(log_file=self.log_file,
             log_screen=self.log_screen)
 
-        try:
-            index = self.child.expect(self.base_prompt_regex, 
-                timeout=self.login_timeout)
+        index = self.cexpect(self.base_prompt_regex, 
+            timeout=self.login_timeout)
 
-            if self.debug:
-                rich_print("   [bold blue]after_CONNECT_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
+        if self.debug:
+            rich_print("   [bold blue]after_CONNECT_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
 
-            if index==0:
-                self._go_SEND_LOGIN_PASSWORD()
-            elif index==1:
-                self._go_SEND_LOGIN_USERNAME()
-            elif index==2:
-                self._go_LOGIN_SUCCESS_UNPRIV()
-            elif index==3:
-                self._go_LOGIN_SUCCESS_UNPRIV()
-            elif index==4:
-                self._go_LOGIN_SUCCESS_PRIV()
-        except px.exceptions.EOF:
+        if index==-1:
             time.sleep(70)
             self._go_CONNECT()
+        elif index==0:
+            self._go_SEND_LOGIN_PASSWORD()
+        elif index==1:
+            self._go_SEND_LOGIN_USERNAME()
+        elif index==2:
+            self._go_LOGIN_SUCCESS_UNPRIV()
+        elif index==3:
+            self._go_LOGIN_SUCCESS_UNPRIV()
+        elif index==4:
+            self._go_LOGIN_SUCCESS_PRIV()
 
     def after_SEND_LOGIN_PASSWORD_cb(self):
 
@@ -647,10 +647,10 @@ class Shell(transitions.Machine):
             rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
                 self.state))
 
-        self.child.sendline(self.password)
+        self.csendline(self.password)
 
         try:
-            index = self.child.expect(self.base_prompt_regex,
+            index = self.cexpect(self.base_prompt_regex,
                 timeout=self.login_timeout)
 
             if self.debug:
@@ -689,9 +689,9 @@ class Shell(transitions.Machine):
             rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
                 self.state))
 
-        self.child.sendline(self.username)
+        self.csendline(self.username)
 
-        index = self.child.expect(self.base_prompt_regex,
+        index = self.cexpect(self.base_prompt_regex,
             timeout=self.login_timeout)
 
         if self.debug:
@@ -715,7 +715,7 @@ class Shell(transitions.Machine):
                 self.state))
 
         if self.auto_priv_mode is True:
-            self.child.sendline('enable')
+            self.csendline('enable')
 
             index = self.child.expect(self.base_prompt_regex,
                 timeout=self.command_timeout)
@@ -742,9 +742,9 @@ class Shell(transitions.Machine):
             rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
                 self.state))
 
-        self.child.sendline(self.password)
+        self.csendline(self.password)
 
-        index = self.child.expect(self.base_prompt_regex,
+        index = self.cexpect(self.base_prompt_regex,
             timeout=self.command_timeout)
 
         if self.debug:
