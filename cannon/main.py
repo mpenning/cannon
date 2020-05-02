@@ -6,13 +6,12 @@ import time
 import sys
 import re
 import os
-assert sys.version_info>=(3,0), "cannon does not support Python 2"
+assert sys.version_info>=(3,0,0), "cannon does not support Python 2"
 
 from rich import print as rich_print
 from textfsm import TextFSM
 import pexpect as px
 import transitions
-
 
 """Can't trigger event _go_LOGIN_SUCCESS_UNPRIV from state SEND_LOGIN_PASSWORD!"""
 
@@ -27,6 +26,7 @@ class PromptDetectionError(Exception):
         super(PromptDetectionError, self)
 
 class TeeStdoutFile(object):
+    """Simple class to send stdout to screen and log_file simultaneously"""
     def __init__(self, log_file="", filemode="w", log_screen=False):
         self.log_file = os.path.expanduser(log_file)
         self.filemode = filemode
@@ -62,19 +62,23 @@ class TeeStdoutFile(object):
 
 
 class Account(object):
-    def __init__(self, user, passwd="", priv_passwd=""):
+    def __init__(self, user, passwd="", priv_passwd="", ssh_key=""):
         self.user = user
         self.passwd = passwd
-        priv_passwd = priv_passwd
+        self.priv_passwd = priv_passwd
+        self.ssh_key = os.path.expanduser(ssh_key) # Path to ssh private key
+
+        if passwd=="" and ssh_key=="":
+            raise ValueError("Cannot buid account for {} without a password or ssh key".format(user))
 
     def __repr__(self):
-        return """<Account user:{} passwd:{} priv_passwd:{}>""".format(
-            self.user, self.passwd, self.priv_passwd)
+        return """<Account user:{} passwd:{} priv_passwd:{} ssh_key: {}>""".format(self.user, self.passwd, self.priv_passwd, self.ssh_key)
 
 class Shell(transitions.Machine):
-    def __init__(self, host='', credentials=(), protocols=({'proto': 'ssh',
-        'port': 22}, {'proto': 'telnet', 'port': 23}), auto_priv_mode=True,
-        log_screen=False, log_file='', debug=False, command_timeout=30, 
+    def __init__(self, host='', credentials=(), 
+        ssh_keepalive=60, protocols=({'proto': 'ssh', 'port': 22},
+        {'proto': 'telnet', 'port': 23}), auto_priv_mode=True,
+        log_screen=False, log_file='', debug=False, command_timeout=30,
         login_timeout=10, relogin_delay=120, encoding='utf-8',
         login_attempts=3):
 
@@ -102,6 +106,8 @@ class Shell(transitions.Machine):
         self.child = None   # Pexpect's child object
         self.username = None
         self.password = None
+        self.ssh_key = ""
+        self.ssh_keepalive = int(ssh_keepalive)
         self.credentials_iterator = self.iter_credentials()
         self.proto_dict = {}
 
@@ -272,6 +278,7 @@ class Shell(transitions.Machine):
 
         # Extend the list of cli_prompts if `prompts` was specified
         cli_prompts = self.base_prompt_regex
+        cli_prompts.insert(0, '.+?assword.*?:') # Ensure we match sudo first...
         if prompts!=():
             assert isinstance(prompts, tuple)
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
@@ -287,6 +294,15 @@ class Shell(transitions.Machine):
             self.matching_prompt_regex = cli_prompts[index]# Set matching prompt
             if self.debug:
                 rich_print("    [bold blue]execute() - self.child.expect() matched prompt index=[/bold blue]{}".format(index))
+
+            # Handle sudo password prompt...
+            if index==0:  # a password prompt
+                if self.debug:
+                    rich_print("    [bold blue]Responding to password prompt:[/bold blue] [bold yellow]'{}'[/bold yellow]".format(
+                        self.child.after.splitlines()[-1]))
+                assert self.password!="", "Cannot sudo with no password"
+                self.child.sendline(self.password)
+                index = self.child.expect(cli_prompts, timeout=command_timeout)
 
         except px.exceptions.TIMEOUT:
             # FIXME... I commented this out
@@ -360,6 +376,10 @@ class Shell(transitions.Machine):
 
     def iter_credentials(self):
         for cred in self.credentials:
+            if self.debug:
+                rich_print("    [bold blue]Select credentials:[/bold blue]")
+                rich_print("        [bold yellow]{}[/bold yellow]".format(
+                    repr(cred)))
             yield cred
 
     def sync_prompt(self):
@@ -421,15 +441,18 @@ class Shell(transitions.Machine):
     def detect_prompt(self):
         """detect_prompt() checks for premature entry into INTERACT and also looks for a prompt string"""
         # Detect the prompt as best-possible...
-
         if self.debug:
             rich_print("[bold blue]Entering detect_prompt()[/bold blue]")
+
+        abbv_prompt_list = ['sername:', 'assword:', '>', re.escape('$'), 
+            re.escape('#')]
+
         # Double check that this isn't a pre-login banner...
         finished = False
         while not finished:
             try:
-                index = self.child.expect(['sername:', 'assword:', '>', '\$', 
-                    '#'], timeout=1) # Use a very short timeout here
+                # Use a very short timeout here...
+                index = self.child.expect(abbv_prompt_list, timeout=1)
                 if index==0:
                     # We went to detect_prompt() based on some banner
                     if self.debug:
@@ -440,24 +463,34 @@ class Shell(transitions.Machine):
                     if self.debug:
                         rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_PASSWORD[/bold blue]")
                     self._go_SEND_LOGIN_PASSWORD()
+                ## FIXME I might have to delete this case...
+                elif index>1:
+                    finished = True
             except px.exceptions.TIMEOUT:
+                if self.debug:
+                    rich_print("[bold blue]    detect_prompt() TIMEOUT condition 1[/bold blue]")
                 finished = True
 
         if self.debug:
-            rich_print("    [bold blue]detect_prompt() using prompt detection heuristics[/bold blue]")
+            rich_print("\n    [bold blue]detect_prompt() using prompt detection heuristics[/bold blue]")
         self.child.sendline('')
-        index = self.child.expect([':', ':', '>', '\$', '#'],
-            timeout=1) # Use a very short timeout here
+        # Use a very short timeout here
+        index = self.child.expect(abbv_prompt_list, timeout=1)
+        if self.debug:
+            rich_print("\n    [bold blue]Triggering on prompt: {}[/bold blue]".format(abbv_prompt_list[index]))
         candidate_prompt_list = self.child.before.strip().splitlines()
+        if self.debug:
+            rich_print("\n    [bold blue]len(candidate_prompt_list): {}[/bold blue]".format(len(candidate_prompt_list)))
+            rich_print("\n    [bold blue]candidate_prompt_list:[/bold blue]")
+            rich_print("\n    [bold blue]{}[/bold blue]".format(str(candidate_prompt_list)))
         candidate_prompt_str = candidate_prompt_list[-1]
         mm = re.search(self.base_prompt_regex_capture[index],
             candidate_prompt_str)
         if mm is not None:
             # We will regex-escape prompt_str in build_prompt_regex()
             self.prompt_str = mm.group(1)
-
-        if self.debug:
-            rich_print("\n    [bold blue]detect_prompt() found prompt_str:[/bold blue] '{}'".format(self.prompt_str))
+            if self.debug:
+                rich_print("\n    [bold blue]detect_prompt() found prompt_str:[/bold blue] '{}'".format(self.prompt_str))
 
         self.build_prompt_regex()  # Adjust the prompt regex after detection
 
@@ -490,15 +523,23 @@ class Shell(transitions.Machine):
 
         finished = False
         for ii in range(0, 3):
+
+            if finished:
+                continue
+
             for proto_dict in self.iter_protocols():
                 self.proto_dict = proto_dict
                 proto_name, proto_port = proto_dict.get('proto'), proto_dict.get('port')
+                if self.debug:
+                    rich_print("    [bold blue]Trying TCP socket to {} port {}[/bold blue]".format(self.host, proto_port))
                 with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as proto_sock:
                     proto_sock.settimeout(3)
                     try:
                         if proto_sock.connect_ex((self.host, proto_port))==0:
                             ## We completed a tcp connection to proto_port...
                             ##   now, get the credentials
+                            if self.debug:
+                                rich_print("    [bold blue]SUCCESS: port {}[/bold blue]".format(proto_port))
                             finished = True
                             break
                     except socket.gaierror:
@@ -522,6 +563,7 @@ class Shell(transitions.Machine):
             cred = next(self.credentials_iterator)
             self.username = cred.user
             self.password = cred.passwd
+            self.ssh_key = cred.ssh_key
 
             if self.child is not None:
                 self.child.close()      # Make way for a fresh child instance
@@ -541,8 +583,13 @@ class Shell(transitions.Machine):
             self.child.close()
 
         # Implement ssh or telnet command...
-        if self.proto_dict['proto']=='ssh':
-            cmd = 'ssh -l {} -p {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no {}'.format(self.username, self.proto_dict['port'], self.host)
+        if self.proto_dict['proto']=='ssh' and self.ssh_key!="":
+            cmd = 'ssh -l {} -p {} -i {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval={} {}'.format(self.username, self.proto_dict['port'], self.ssh_key, self.ssh_keepalive, self.host)
+
+        elif self.proto_dict['proto']=='ssh' and self.ssh_key=="":
+            # https://serverfault.com/a/1002182/78702
+            cmd = 'ssh -l {} -p {} -o PubkeyAuthentication=no -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval={} {}'.format(self.username, self.proto_dict['port'], self.ssh_keepalive, self.host)
+
         elif self.proto_dict['proto']=='telnet':
             cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
 
@@ -572,7 +619,6 @@ class Shell(transitions.Machine):
         elif (self.log_screen is True) and self.log_file!="":
             self.child.logfile = TeeStdoutFile(log_file=self.log_file,
             log_screen=self.log_screen)
-
 
         try:
             index = self.child.expect(self.base_prompt_regex, 
