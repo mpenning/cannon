@@ -11,7 +11,7 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 setup(name='cannon',
-      version="0.0.21",
+      version="0.0.22",
       description='cannon',
       url='http://github.com/mpenning/cannon',
       author='David Michael Pennington',
@@ -25,7 +25,7 @@ setup(name='cannon',
       packages=find_packages(),
       use_2to3=True,
       zip_safe=False,
-      install_requires = ["pexpect", "transitions", "textfsm"],
+      install_requires = ["pexpect", "transitions", "textfsm", "rich"],
       setup_requires=[],
       classifiers=[
           'Development Status :: 4 - Beta',
