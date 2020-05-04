@@ -10,20 +10,20 @@ print("Test logging into linux with ssh...")
 acct01 = Account('mpenning', 'badPassword')
 acct02 = Account(getuser(), getpass(), ssh_key='~/.ssh/id_rsa')
 
-conn = Shell('localhost', credentials=(acct01, acct02), auto_priv_mode=False,
+conn = Shell('localhost', credentials=(acct01, acct02),
     debug=True, log_screen=True)
+#conn.execute("export PS1='host>'", command_timeout=1)
+#conn.detect_prompt()
+#conn.sync_prompt()
 conn.execute('ls')
 for file in re.split('\s+', conn.response):
     print("FILE "+file)
 conn.execute('sudo uname -a')
-print("SUDO1 ")
 conn.execute('sudo ls /tmp')
-print("SUDO2 ")
-conn.execute('sudo su -', command_timeout=1)
-conn.detect_prompt()
-conn.execute('whoami')
-conn.execute('exit')
-try:
-    conn.execute('exit')
-except:
-    pass
+#conn.detect_prompt()
+conn.execute('whoami', command_timeout=5)
+#conn.interact()   # FIXME, I can't find a way to make interact() stop crashing
+print("WHOAMI RESULT QUOTED '{}'".format(conn.response))
+conn.execute('uptime', command_timeout=5)
+print("UPTIME '{}'".format(conn.response))
+conn.close()
