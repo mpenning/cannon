@@ -24,7 +24,8 @@ Example Usage
         )
 
     sess.execute('term len 0')
-    sess.sync_prompt() # Manually sync prompts... sometimes this is reqd
+    # Manually sync prompts... sometimes this is reqd
+    sess.sync_prompt(require_detect_prompt=False)
 
     # template is a TextFSM template
     values = sess.execute('show ip int brief',
