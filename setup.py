@@ -11,13 +11,13 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 setup(name='cannon',
-      version="0.0.23",
+      version="0.0.24",
       description='cannon',
       url='http://github.com/mpenning/cannon',
       author='David Michael Pennington',
       author_email='mike@pennington.net',
       license='GPL',
-      platforms='any',
+      platforms=['any'],
       keywords='',
       entry_points = "",
       long_description=read('README.rst'),

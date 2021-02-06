@@ -19,13 +19,13 @@ Example Usage
 
         log_screen=False,
         log_file="~/mylog.txt",
-        auto_priv_mode=False,
         debug=False,
         )
 
     sess.execute('term len 0')
-    # Manually sync prompts... sometimes this is reqd
-    sess.sync_prompt(require_detect_prompt=False)
+
+    sess.execute('show version')
+    version_text = sess.response
 
     # template is a TextFSM template
     values = sess.execute('show ip int brief',

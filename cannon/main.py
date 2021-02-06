@@ -6,7 +6,8 @@ import time
 import sys
 import re
 import os
-assert sys.version_info>=(3,0,0), "cannon does not support Python 2"
+
+assert sys.version_info >= (3, 0, 0), "cannon does not support Python 2"
 
 from rich import print as rich_print
 from textfsm import TextFSM
@@ -16,36 +17,40 @@ import snoop
 
 """Can't trigger event _go_LOGIN_SUCCESS_UNPRIV from state SEND_LOGIN_PASSWORD!"""
 
+
 class UnexpectedPrompt(Exception):
     """Exception for an Unexpected Prompt"""
+
     def __init__(self, error=""):
         super(UnexpectedPrompt, self).__init__(error)
 
+
 class PromptDetectionError(Exception):
     """Exception for an Unexpected Prompt"""
+
     def __init__(self, error=""):
         super(PromptDetectionError, self).__init__(error)
 
+
 # DO NOT escape '$' here
-EXPECTED_LAST_PROMPT_CHARS = (':', '>', '#', '$')
+EXPECTED_LAST_PROMPT_CHARS = (":", ">", "#", "$")
 BASE_PROMPT_REGEX_LENGTH = 7
+
 
 class TeeStdoutFile(object):
     """Simple class to send stdout to screen and log_file simultaneously"""
-    def __init__(self, log_file="", filemode="w", log_screen=False,
-        encoding='utf-8'):
+
+    def __init__(self, log_file="", filemode="w", log_screen=False, encoding="utf-8"):
         self.log_file = os.path.expanduser(log_file)
         self.filemode = filemode
         self.log_screen = log_screen
         self.stdout = sys.stdout
         self.encoding = encoding
 
-        try:
-            assert os.path.isfile(self.log_file) is False
-        except AssertionError:
-            raise ValueError("Cannot overwrite existing log_file={}".format(
-                self.log_file))
-            sys.exit(1)
+        # automatically remove empty log files
+        if os.path.isfile(self.log_file) and os.path.getsize(self.log_file) == 0:
+            print("FILE", self.log_file)
+            os.remove(self.log_file)
 
         self.fh = open(self.log_file, self.filemode, encoding=self.encoding)
 
@@ -78,33 +83,57 @@ class Account(object):
         self.user = user
         self.passwd = passwd
         self.priv_passwd = priv_passwd
-        self.ssh_key = os.path.expanduser(ssh_key) # Path to ssh private key
+        self.ssh_key = os.path.expanduser(ssh_key)  # Path to ssh private key
 
     def __repr__(self):
-        return """<Account user:{} passwd:{} priv_passwd:{} ssh_key: {}>""".format(self.user, self.passwd, self.priv_passwd, self.ssh_key)
+        return """<Account user:{} passwd:{} priv_passwd:{} ssh_key: {}>""".format(
+            self.user, self.passwd, self.priv_passwd, self.ssh_key
+        )
+
 
 class Shell(transitions.Machine):
-    def __init__(self, host='', credentials=(), 
-        ssh_keepalive=60, protocols=({'proto': 'ssh', 'port': 22},
-        {'proto': 'telnet', 'port': 23}), auto_priv_mode=None,
-        log_screen=False, log_file='', debug=False, command_timeout=30,
-        login_timeout=10, relogin_delay=120, encoding='utf-8',
-        login_attempts=3):
+    def __init__(
+        self,
+        host="",
+        credentials=(),
+        ssh_keepalive=60,
+        protocols=({"proto": "ssh", "port": 22}, {"proto": "telnet", "port": 23}),
+        auto_priv_mode=None,
+        log_screen=False,
+        log_file="",
+        debug=False,
+        command_timeout=30,
+        login_timeout=10,
+        relogin_delay=120,
+        encoding="utf-8",
+        login_attempts=3,
+    ):
 
-        STATES = ('INIT_SESSION', 'SELECT_PROTOCOL', 
-            'SELECT_LOGIN_CREDENTIALS', 'SEND_LOGIN_USERNAME', 
-            'SEND_LOGIN_PASSWORD', 'CONNECT', 
-            'LOGIN_SUCCESS_UNPRIV', 'LOGIN_SUCCESS_PRIV',
-            'LOGIN_TIMEOUT', 'SEND_PRIV_PASSWORD', 
-            'LOGIN_COMPLETE', 'INTERACT', 'CLOSE_SESSION')
-        super(Shell, self).__init__(states=STATES, initial='INIT_SESSION')
+        STATES = (
+            "INIT_SESSION",
+            "SELECT_TCP_PROTOCOL",
+            "SELECT_LOGIN_CREDENTIALS",
+            "SEND_LOGIN_USERNAME",
+            "SEND_LOGIN_PASSWORD",
+            "CONNECT",
+            "LOGIN_SUCCESS_UNPRIV",
+            "LOGIN_SUCCESS_PRIV",
+            "LOGIN_TIMEOUT",
+            "SEND_PRIV_PASSWORD",
+            "LOGIN_COMPLETE",
+            "INTERACT",
+            "CLOSE_SESSION",
+        )
+        super(Shell, self).__init__(states=STATES, initial="INIT_SESSION")
 
         self.host = host
         self.credentials = credentials
         self.protocols = protocols
         self.auto_priv_mode = auto_priv_mode
         if auto_priv_mode is not None:
-            rich_print("[bold red]WARNING: auto_priv_mode will be deprecated.  Please stop using this option.[/bold red]")
+            rich_print(
+                "[bold red]WARNING: auto_priv_mode will be deprecated.  Please stop using this option.[/bold red]"
+            )
             time.sleep(2.5)
         self.log_screen = log_screen
         self.log_file = os.path.expanduser(log_file)
@@ -115,206 +144,297 @@ class Shell(transitions.Machine):
         self.encoding = encoding
         self.login_attempts = login_attempts
 
-        self.child = None   # Pexpect's child object
+        self.child = None  # Pexpect's child object
         self.username = None
         self.password = None
         self.ssh_key = ""
         self.ssh_keepalive = int(ssh_keepalive)
-        self.ciphers = []
-        self.key_exchanges = []
+        self.ciphers = ""
+        self.key_exchanges = ""
         self.connect_cmd = ""
         self.credentials_iterator = self.iter_credentials()
         self.proto_dict = {}
 
-        self.prompt_str = ""    # This gets set in self.sync_prompt()
+        self.prompt_hostname = ""
+        self.prompt_str = ""  # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        #self.linux_prompt_capture = '([^\r\n{0}]+)\s*$'.format(re.escape('$'))
-        self.linux_prompt_capture = '[\r\n]*[^\r\n{0}]+\s*{0}'.format(re.escape('$'))
+        # self.linux_prompt_capture = '([^\r\n{0}]+)\s*$'.format(re.escape('$'))
+        self.linux_prompt_capture = "[\r\n]*[^\r\n{0}]+\s*{0}".format(re.escape("$"))
         # Build the template before detecting prompt
         self.base_prompt_regex = self.build_base_prompt_regex()
 
         # Define regex capture groups for the prompts above...
         # NOTE there are no prompts in these strings..
-        self.base_prompt_regex_capture = [':', ':', 
-            '(\S[^\n\r>]+?)\s*$', self.linux_prompt_capture, 
-            '(\S[^\n\r{0}]+?)\s*$'.format(re.escape('#'))]
-            #'(\S[^\n\r>]+?)\s*>', self.linux_prompt_capture, 
-            #'(\S[^\n\r{0}]+?)\s*{0}'.format(re.escape('#'))]
+        self.base_prompt_regex_capture = [
+            ":",
+            ":",
+            "(\S[^\n\r>]+?)\s*$",
+            self.linux_prompt_capture,
+            "(\S[^\n\r{0}]+?)\s*$".format(re.escape("#")),
+        ]
+        #'(\S[^\n\r>]+?)\s*>', self.linux_prompt_capture,
+        #'(\S[^\n\r{0}]+?)\s*{0}'.format(re.escape('#'))]
 
         self.matching_prompt_regex = ""
         self.matching_prompt_regex_index = -1
         self.matching_string = ""
 
         #######################################################################
-        ## Transitions to SELECT_PROTOCOL state
+        ## Transitions to SELECT_TCP_PROTOCOL state
         #######################################################################
-        self.add_transition(trigger='_go_SELECT_PROTOCOL', 
-            source='INIT_SESSION', dest='SELECT_PROTOCOL',
-            after='after_SELECT_PROTOCOL_cb')
+        self.add_transition(
+            trigger="_go_SELECT_TCP_PROTOCOL",
+            source="INIT_SESSION",
+            dest="SELECT_TCP_PROTOCOL",
+            after="after_SELECT_TCP_PROTOCOL_cb",
+        )
 
         #######################################################################
         ## Transitions to SELECT_LOGIN_CREDENTIALS state
         #######################################################################
-        self.add_transition(trigger='_go_SELECT_LOGIN_CREDENTIALS', 
-            source='SELECT_PROTOCOL', dest='SELECT_LOGIN_CREDENTIALS',
-                after='after_SELECT_LOGIN_CREDENTIALS_cb')
+        self.add_transition(
+            trigger="_go_SELECT_LOGIN_CREDENTIALS",
+            source="SELECT_TCP_PROTOCOL",
+            dest="SELECT_LOGIN_CREDENTIALS",
+            after="after_SELECT_LOGIN_CREDENTIALS_cb",
+        )
 
-        self.add_transition(trigger='_go_SELECT_LOGIN_CREDENTIALS', 
-            source='SEND_LOGIN_PASSWORD', dest='SELECT_LOGIN_CREDENTIALS',
-                after='after_SELECT_LOGIN_CREDENTIALS_cb')
+        self.add_transition(
+            trigger="_go_SELECT_LOGIN_CREDENTIALS",
+            source="SEND_LOGIN_PASSWORD",
+            dest="SELECT_LOGIN_CREDENTIALS",
+            after="after_SELECT_LOGIN_CREDENTIALS_cb",
+        )
 
-        self.add_transition(trigger='_go_SELECT_LOGIN_CREDENTIALS', 
-            source='LOGIN_COMPLETE', dest='SELECT_LOGIN_CREDENTIALS',
-                after='after_SELECT_LOGIN_CREDENTIALS_cb')
+        # FIXME - removed on 31 Jan 2021
+        # self.add_transition(
+        #    trigger="_go_SELECT_LOGIN_CREDENTIALS",
+        #    source="LOGIN_COMPLETE",
+        #    dest="SELECT_LOGIN_CREDENTIALS",
+        #    after="after_SELECT_LOGIN_CREDENTIALS_cb",
+        # )
 
         #######################################################################
         ## Transitions to CONNECT state
         #######################################################################
-        self.add_transition(trigger='_go_CONNECT', 
-            source='CONNECT', dest='CONNECT',
-            after='after_CONNECT_cb')
+        self.add_transition(
+            trigger="_go_CONNECT",
+            source="CONNECT",
+            dest="CONNECT",
+            after="after_CONNECT_cb",
+        )
 
-        self.add_transition(trigger='_go_CONNECT', 
-            source='SELECT_LOGIN_CREDENTIALS', dest='CONNECT',
-            after='after_CONNECT_cb')
+        self.add_transition(
+            trigger="_go_CONNECT",
+            source="SELECT_LOGIN_CREDENTIALS",
+            dest="CONNECT",
+            after="after_CONNECT_cb",
+        )
 
         #######################################################################
         ## Transitions to SEND_LOGIN_USERNAME state
         #######################################################################
-        self.add_transition(trigger='_go_SEND_LOGIN_USERNAME', 
-            source='CONNECT', dest='SEND_LOGIN_USERNAME',
-            after='after_SEND_LOGIN_USERNAME_cb')
+        self.add_transition(
+            trigger="_go_SEND_LOGIN_USERNAME",
+            source="CONNECT",
+            dest="SEND_LOGIN_USERNAME",
+            after="after_SEND_LOGIN_USERNAME_cb",
+        )
 
         # In case we got to LOGIN_COMPLETE prematurely...
-        self.add_transition(trigger='_go_SEND_LOGIN_USERNAME', 
-            source='LOGIN_COMPLETE', dest='SEND_LOGIN_USERNAME',
-            after='after_SEND_LOGIN_USERNAME_cb')
+        self.add_transition(
+            trigger="_go_SEND_LOGIN_USERNAME",
+            source="LOGIN_COMPLETE",
+            dest="SEND_LOGIN_USERNAME",
+            after="after_SEND_LOGIN_USERNAME_cb",
+        )
 
         #######################################################################
         ## Transitions to SEND_LOGIN_PASSWORD state
         #######################################################################
-        self.add_transition(trigger='_go_SEND_LOGIN_PASSWORD', 
-            source='CONNECT', dest='SEND_LOGIN_PASSWORD',
-            after='after_SEND_LOGIN_PASSWORD_cb')
+        self.add_transition(
+            trigger="_go_SEND_LOGIN_PASSWORD",
+            source="CONNECT",
+            dest="SEND_LOGIN_PASSWORD",
+            after="after_SEND_LOGIN_PASSWORD_cb",
+        )
 
-        self.add_transition(trigger='_go_SEND_LOGIN_PASSWORD', 
-            source='SEND_LOGIN_USERNAME', dest='SEND_LOGIN_PASSWORD',
-            after='after_SEND_LOGIN_PASSWORD_cb')
+        self.add_transition(
+            trigger="_go_SEND_LOGIN_PASSWORD",
+            source="SEND_LOGIN_USERNAME",
+            dest="SEND_LOGIN_PASSWORD",
+            after="after_SEND_LOGIN_PASSWORD_cb",
+        )
 
         # In case we need to try the same password again
-        self.add_transition(trigger='_go_SEND_LOGIN_PASSWORD', 
-            source='SEND_LOGIN_PASSWORD', dest='SEND_LOGIN_PASSWORD',
-            after='after_SEND_LOGIN_PASSWORD_cb')
+        self.add_transition(
+            trigger="_go_SEND_LOGIN_PASSWORD",
+            source="SEND_LOGIN_PASSWORD",
+            dest="SEND_LOGIN_PASSWORD",
+            after="after_SEND_LOGIN_PASSWORD_cb",
+        )
 
         # In case we got to LOGIN_COMPLETE prematurely...
-        self.add_transition(trigger='_go_SEND_LOGIN_PASSWORD', 
-            source='LOGIN_COMPLETE', dest='SEND_LOGIN_PASSWORD',
-            after='after_SEND_LOGIN_PASSWORD_cb')
+        self.add_transition(
+            trigger="_go_SEND_LOGIN_PASSWORD",
+            source="LOGIN_COMPLETE",
+            dest="SEND_LOGIN_PASSWORD",
+            after="after_SEND_LOGIN_PASSWORD_cb",
+        )
 
         #######################################################################
         ## Transitions to LOGIN_SUCCESS_UNPRIV state
         #######################################################################
-        self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
-            source='SEND_LOGIN_USERNAME', dest='LOGIN_SUCCESS_UNPRIV',
-            after='after_LOGIN_SUCCESS_UNPRIV_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_SUCCESS_UNPRIV",
+            source="SEND_LOGIN_USERNAME",
+            dest="LOGIN_SUCCESS_UNPRIV",
+            after="after_LOGIN_SUCCESS_UNPRIV_cb",
+        )
 
-        self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
-            source='SEND_LOGIN_PASSWORD', dest='LOGIN_SUCCESS_UNPRIV',
-            after='after_LOGIN_SUCCESS_UNPRIV_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_SUCCESS_UNPRIV",
+            source="SEND_LOGIN_PASSWORD",
+            dest="LOGIN_SUCCESS_UNPRIV",
+            after="after_LOGIN_SUCCESS_UNPRIV_cb",
+        )
 
-        self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
-            source='CONNECT', dest='LOGIN_SUCCESS_UNPRIV',
-            after='after_LOGIN_SUCCESS_UNPRIV_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_SUCCESS_UNPRIV",
+            source="CONNECT",
+            dest="LOGIN_SUCCESS_UNPRIV",
+            after="after_LOGIN_SUCCESS_UNPRIV_cb",
+        )
 
         #######################################################################
         ## Transitions to SEND_PRIV_PASSWORD state
         #######################################################################
-        self.add_transition(trigger='_go_LOGIN_SUCCESS_UNPRIV', 
-            source='LOGIN_SUCCESS_UNPRIV', dest='SEND_PRIV_PASSWORD',
-            after='after_SEND_PRIV_PASSWORD_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_SUCCESS_UNPRIV",
+            source="LOGIN_SUCCESS_UNPRIV",
+            dest="SEND_PRIV_PASSWORD",
+            after="after_SEND_PRIV_PASSWORD_cb",
+        )
 
         #######################################################################
         ## Transitions to LOGIN_SUCCESS_PRIV state
         #######################################################################
-        self.add_transition(trigger='_go_LOGIN_SUCCESS_PRIV', 
-            source='CONNECT', dest='LOGIN_SUCCESS_PRIV',
-            after='after_LOGIN_SUCCESS_PRIV_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_SUCCESS_PRIV",
+            source="CONNECT",
+            dest="LOGIN_SUCCESS_PRIV",
+            after="after_LOGIN_SUCCESS_PRIV_cb",
+        )
 
-        self.add_transition(trigger='_go_LOGIN_SUCCESS_PRIV', 
-            source='SEND_LOGIN_PASSWORD', dest='LOGIN_SUCCESS_PRIV',
-            after='after_LOGIN_SUCCESS_PRIV_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_SUCCESS_PRIV",
+            source="SEND_LOGIN_PASSWORD",
+            dest="LOGIN_SUCCESS_PRIV",
+            after="after_LOGIN_SUCCESS_PRIV_cb",
+        )
 
         #######################################################################
         ## Transitions to LOGIN_COMPLETE state
         #######################################################################
-        self.add_transition(trigger='_go_LOGIN_COMPLETE', 
-            source='LOGIN_SUCCESS_UNPRIV', dest='LOGIN_COMPLETE',
-            after='after_LOGIN_COMPLETE_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_COMPLETE",
+            source="LOGIN_SUCCESS_UNPRIV",
+            dest="LOGIN_COMPLETE",
+            after="after_LOGIN_COMPLETE_cb",
+        )
 
-        self.add_transition(trigger='_go_LOGIN_COMPLETE', 
-            source='LOGIN_SUCCESS_PRIV', dest='LOGIN_COMPLETE',
-            after='after_LOGIN_COMPLETE_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_COMPLETE",
+            source="LOGIN_SUCCESS_PRIV",
+            dest="LOGIN_COMPLETE",
+            after="after_LOGIN_COMPLETE_cb",
+        )
 
-        self.add_transition(trigger='_go_LOGIN_COMPLETE', 
-            source='LOGIN_COMPLETE', dest='LOGIN_COMPLETE',
-            after='after_LOGIN_COMPLETE_cb')
+        self.add_transition(
+            trigger="_go_LOGIN_COMPLETE",
+            source="LOGIN_COMPLETE",
+            dest="LOGIN_COMPLETE",
+            after="after_LOGIN_COMPLETE_cb",
+        )
 
         #######################################################################
         ## Transitions to INTERACT state
         #######################################################################
-        self.add_transition(trigger='_go_INTERACT', 
-            source='LOGIN_COMPLETE', dest='INTERACT',
-            after='after_INTERACT_cb')
+        self.add_transition(
+            trigger="_go_INTERACT",
+            source="LOGIN_COMPLETE",
+            dest="INTERACT",
+            after="after_INTERACT_cb",
+        )
 
         #######################################################################
-        ## Unconditionally transition to the SELECT_PROTOCOL state
+        ## Unconditionally transition to the SELECT_TCP_PROTOCOL state
         #######################################################################
-        self._go_SELECT_PROTOCOL()
-
-    def get_ssh_cipher_value(self):
-        if len(self.ciphers) > 0:
-            for cipher in self.ciphers:
-                return cipher
-        else:
-            return ""
-
-    def get_ssh_key_exchange_value(self):
-        if len(self.key_exchanges) > 0:
-            for key_exchange in self.key_exchanges:
-                return key_exchange
-        else:
-            return ""
+        self._go_SELECT_TCP_PROTOCOL()
 
     def build_connect_cmd(self):
+        if self.debug:
+            rich_print("    [bold cyan]in build_connect_cmd()[/bold cyan]")
+            rich_print(
+                "    [bold blue]build_connect_cmd() is configuring ssh parameters for self.connect_cmd[/bold blue]"
+            )
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
 
-        cipher = self.get_ssh_cipher_value()
-        if cipher:
-            cipher_opt = "-c {}".format(cipher)
+        if self.ciphers:
+            cipher_opt = "-c {}".format(self.ciphers)
         else:
             cipher_opt = ""
 
-        key_exchange = self.get_ssh_key_exchange_value()
-        if key_exchange:
-            key_exchange_opt = "-o KexAlgorithms={}".format(key_exchange)
+        if self.key_exchanges:
+            key_exchange_opt = "-o KexAlgorithms={}".format(self.key_exchanges)
         else:
             key_exchange_opt = ""
 
         # Implement ssh or telnet command... ssh with public key
-        if self.proto_dict['proto']=='ssh' and self.ssh_key!="":
-            self.connect_cmd = 'ssh {} {} -l {} -p {} -i {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval={} {}'.format(cipher_opt, key_exchange_opt, self.username, self.proto_dict['port'], self.ssh_key, self.ssh_keepalive, self.host)
+        if self.proto_dict["proto"] == "ssh" and self.ssh_key != "":
+            self.connect_cmd = "ssh {} {} -l {} -p {} -i {} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval={} {}".format(
+                cipher_opt,
+                key_exchange_opt,
+                self.username,
+                self.proto_dict["port"],
+                self.ssh_key,
+                self.ssh_keepalive,
+                self.host,
+            )
 
-        elif self.proto_dict['proto']=='ssh' and self.ssh_key=="":
+        elif self.proto_dict["proto"] == "ssh" and self.ssh_key == "":
             # https://serverfault.com/a/1002182/78702
-            self.connect_cmd = 'ssh {} {} -l {} -p {} -o PubkeyAuthentication=no -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval={} {}'.format(cipher_opt, key_exchange_opt, self.username, self.proto_dict['port'], self.ssh_keepalive, self.host)
+            self.connect_cmd = "ssh {} {} -l {} -p {} -o PubkeyAuthentication=no -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval={} {}".format(
+                cipher_opt,
+                key_exchange_opt,
+                self.username,
+                self.proto_dict["port"],
+                self.ssh_keepalive,
+                self.host,
+            )
 
-        elif self.proto_dict['proto']=='telnet':
-            self.connect_cmd = 'telnet {} {}'.format(self.host, self.proto_dict['port'])
+        elif self.proto_dict["proto"] == "telnet":
+            self.connect_cmd = "telnet {} {}".format(self.host, self.proto_dict["port"])
 
         else:
             raise NotImplementedError("")
 
-    def execute(self, cmd=None, template=None, prompts=(),
-        command_timeout=0.0, carriage_return=True):
+        if self.debug:
+            rich_print("    [bold blue]build_connect_cmd() finished[/bold blue]")
+            rich_print("")
+
+    def execute(
+        self,
+        cmd=None,
+        template=None,
+        prompts=(),
+        command_timeout=0.0,
+        carriage_return=True,
+    ):
         """Run a command and optionally parse with a TextFSM template
 
             - `cmd` is the command to execute
@@ -330,31 +450,39 @@ class Shell(transitions.Machine):
         assert self.child.isalive()  # Don't issue commands against a dead conn
 
         if self.debug:
-            rich_print("[bold blue]execute() called[/bold blue]")
+            rich_print("    [bold cyan]in execute()[/bold cyan]")
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
 
-        if command_timeout==0.0:
+        if command_timeout == 0.0:
             command_timeout = self.command_timeout
 
-        arg_list = ('cmd', 'template', 'prompts', 'command_timeout',
-            'carriage_return')
+        arg_list = ("cmd", "template", "prompts", "command_timeout", "carriage_return")
         arg = list()
         if self.debug:
             # build the debugging string...
             for ii in arg_list:
-                if ii=='cmd':
-                    arg.append("'"+cmd+"'")
-                elif ii=='template' and template is not None:
-                    arg.append('template=TRUNCATED'.format(template))
-                elif ii=='template' and template is None:
-                    arg.append('template=None')
-                elif ii=='prompts':
-                    arg.append('prompts={}'.format(prompts))
-                elif ii=='command_timeout':
-                    arg.append('command_timeout={}'.format(command_timeout))
-                elif ii=='carriage_return':
-                    arg.append('carriage_return={}'.format(carriage_return))
-            logstr = ', '.join(arg)
-            rich_print('[bold blue]execute([/bold blue][bold green]{}[/bold green][bold blue])[/bold blue]'.format(logstr))
+                if ii == "cmd":
+                    arg.append("'" + cmd + "'")
+                elif ii == "template" and template is not None:
+                    arg.append("template=TRUNCATED".format(template))
+                elif ii == "template" and template is None:
+                    arg.append("template=None")
+                elif ii == "prompts":
+                    arg.append("prompts={}".format(prompts))
+                elif ii == "command_timeout":
+                    arg.append("command_timeout={}".format(command_timeout))
+                elif ii == "carriage_return":
+                    arg.append("carriage_return={}".format(carriage_return))
+            logstr = ", ".join(arg)
+            rich_print(
+                "    [bold blue]execute([/bold blue][bold green]{}[/bold green][bold blue])[/bold blue]".format(
+                    logstr
+                )
+            )
 
         if carriage_return:
             self.csendline(cmd)
@@ -363,31 +491,45 @@ class Shell(transitions.Machine):
 
         # Extend the list of cli_prompts if `prompts` was specified
         # FIXME
-        #cli_prompts = self.base_prompt_regex
+        # cli_prompts = self.base_prompt_regex
         cli_prompts = self.build_base_prompt_regex()
 
-        if prompts!=():
+        if prompts != ():
             assert isinstance(prompts, tuple)
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
 
         # Look for prompt matches after executing the command
+        if self.debug:
+            rich_print(
+                "    [bold blue]execute(cmd='{}') calling cexpect()[/bold blue]".format(
+                    cmd
+                )
+            )
         index = self.cexpect(cli_prompts, timeout=command_timeout)
 
         # Handle sudo password prompt...
-        if index==3:  # a password prompt
+        if False and index == 3:  # TODO remove False (and maybe all this under it)
             if self.debug:
-                rich_print("    [bold blue]Responding to password prompt:[/bold blue] [bold yellow]'{}'[/bold yellow]".format(
-                    self.matching_prompt))
-            assert self.password!="", "Hit a password prompt without a password"
+                rich_print(
+                    "    [bold blue]Responding to password prompt:[/bold blue] [bold yellow]'{}'[/bold yellow]".format(
+                        self.matching_prompt
+                    )
+                )
+            assert self.password != "", "Hit a password prompt without a password"
             self.csendline(self.password)
+            if self.debug:
+                rich_print(
+                    "    [bold blue]execute(cmd='{}') sent a password[/bold blue]".format(
+                        cmd
+                    )
+                )
             index = self.cexpect(cli_prompts, timeout=command_timeout)
-
 
         ## If template is specified, parse the response into a list of dicts...
         if template is not None:
             if os.path.isfile(str(template)):
                 # open the textfsm template from disk...
-                fh = open(template, 'r')
+                fh = open(template, "r")
             else:
                 # build a fake filehandle around textfsm template string
                 fh = StringIO(template)
@@ -409,14 +551,14 @@ class Shell(transitions.Machine):
                         # Require the row to be a list
                         assert isinstance(row, list)
                         # Require row to be exactly as long as the header list
-                        assert len(row)==len(header)
+                        assert len(row) == len(header)
                         row_dict = {}
                         for idx, value in enumerate(row):
                             row_dict[header[idx]] = value
                         retval.append(row_dict)
                     except AssertionError:
                         break
-                if len(retval)>0:
+                if len(retval) > 0:
                     return retval
         else:
             return None
@@ -424,99 +566,193 @@ class Shell(transitions.Machine):
     def csendline(self, text):
         assert self.child.isalive()
         if self.debug:
-            rich_print("    [bold blue]csendline([/bold blue][bold yellow]'{}'[/bold yellow][bold blue])[/bold blue]".format(text))
-            rich_print("    [bold blue]---------[/bold blue]")
+            rich_print("")
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
+            rich_print(
+                "        [bold blue]csendline([/bold blue][bold yellow]'{}'[/bold yellow][bold blue])[/bold blue]".format(
+                    text
+                )
+            )
 
         # WARNING: use self.child.sendline(); do not use self.csendline() here
         self.child.sendline(text)
 
     def cexpect(self, pattern_list, timeout=-1):
-        assert self.child.isalive()
         if self.debug:
-            rich_print("    [bold blue]cexpect([/bold blue][bold green]pattern_list, timeout={}[/bold green][bold blue]) called[/bold blue]".format(timeout))
+            rich_print("")
+            rich_print("    [bold cyan]in cexpect()[/bold cyan]")
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
+            rich_print(
+                "    [bold blue]cexpect([/bold blue][bold green]pattern_list, timeout={}[/bold green][bold blue]) called[/bold blue]".format(
+                    timeout
+                )
+            )
             # Expand all pattern_list terms...
             rich_print("        [bold blue]pattern_list = {}[/bold blue]".format("[["))
             for idx, term in enumerate(pattern_list):
-                rich_print("            [bold blue]{} {},[/bold blue]".format(
-                    idx, repr(term)))
+                rich_print(
+                    "            [bold blue]{} {},[/bold blue]".format(idx, repr(term))
+                )
             rich_print("        [bold blue]{}[/bold blue]".format(str("]]")))
+
+        # FIXME - this could break cexpect if ssh connection is still in progress
+        # assert self.child.isalive()
 
         now = time.time()
 
         try:
+            if self.debug:
+                rich_print(
+                    "    [bold blue]cexpect() calling self.child.expect()[/bold blue]"
+                )
             match_index = self.child.expect(pattern_list, timeout=timeout)
             self.matching_prompt_regex_index = match_index
             self.matching_prompt_regex = pattern_list[match_index]
 
             if self.debug:
-                delta_secs = round(time.time()-now, 4)
-                rich_print("\n      [bold blue]^^ cexpect() matched regex at match_index {}={}[/bold blue]".format(match_index, repr(pattern_list[match_index])))
+                delta_secs = round(time.time() - now, 4)
+                rich_print("")
+                rich_print(
+                    "        [bold blue]^^ cexpect() matched regex at match_index {}={}[/bold blue]".format(
+                        match_index, repr(pattern_list[match_index])
+                    )
+                )
                 # FIXME why can't I use quotes around self.matching_prompt in rich_print()
-                rich_print("      [bold blue]^^ cexpect() matching_prompt={}[/bold blue]".format(repr(self.matching_prompt)))
-                rich_print("      [bold blue]^^ cexpect() match time: {} seconds[/bold blue]".format(delta_secs))
-
+                # rich_print(
+                #    "      [bold blue]^^ cexpect() matching_prompt={}[/bold blue]".format(
+                #        repr(self.matching_prompt)
+                #    )
+                # )
+                rich_print(
+                    "        [bold blue]^^ cexpect() match time: {} seconds[/bold blue]".format(
+                        delta_secs
+                    )
+                )
+                rich_print("")
 
         except px.exceptions.EOF:
             if self.debug:
-                rich_print("      [bold red]cexpect() EOF exception while waiting for pattern_list[/bold red]")
+                rich_print(
+                    "        [bold red]cexpect() EOF exception while waiting for pattern_list[/bold red]"
+                )
             match_index = -1
 
         except px.exceptions.TIMEOUT:
             if self.debug:
-                rich_print("      [bold red]cexpect() TIMEOUT exception while waiting for pattern_list[/bold red]")
+                rich_print(
+                    "        [bold red]cexpect() TIMEOUT exception while waiting for pattern_list[/bold red]"
+                )
             match_index = -1
 
+        if self.debug:
+            rich_print("")
+            rich_print(
+                "        [bold blue]cexpect() returning '{}' to the calling function[/bold blue]".format(
+                    match_index
+                )
+            )
         return match_index
 
     def interact(self):
         self._go_INTERACT()
 
+    def modify_ssh_parameters(self):
+        """This method should be called after calling self.cexpect() during ssh spawn.  It returns True or False"""
+
+        #  no matching ssh cipher found. Their offer:
+        mm = re.search(r"no\s+matching\s+cipher.+?offer:\s+(\S.+)$", self.child.after)
+        if mm is not None:
+            candidate_cipher_list = mm.group(1).strip()
+            self.ciphers = candidate_cipher_list
+            if self.debug:
+                rich_print(
+                    "    [bold blue]matching_prompt set self.ciphers: '{}'[/bold blue]".format(
+                        self.ciphers
+                    )
+                )
+            # We didn't have a matching prompt character...
+            return True
+
+        #  no matching key exchange method found. Their offer: diffie-hellman-group14-sha1
+        mm = re.search(
+            r"no\s+matching\s+key\s+exchange.+?offer:\s+(\S.+)$", self.child.after
+        )
+        if mm is not None:
+            self.key_exchanges = mm.group(1).strip()
+            if self.debug:
+                rich_print(
+                    "valid [bold yellow]key_exchanges={}[/bold yellow]".format(
+                        self.key_exchanges
+                    )
+                )
+            # We didn't have a matching prompt character...
+            return True
+
+        return False
+
     @property
     def matching_prompt(self):
-        """Get the matching prompt character; return None is session is not alive"""
+        """Get the matching prompt character; return the prompt character. Return None is session is not alive"""
+        if self.debug:
+            rich_print("    [bold cyan]in matching_prompt property[/bold cyan]")
 
         # After finds the string which matched...
         after = self.child.after
 
         self.matching_string = after
 
-        #  no matching ssh cipher found. Their offer: 
-        mm = re.search(r"no\s+matching\s+cipher.+?offer:\s+(\S.+)$", after)
-        if mm is not None:
-            self.ciphers = mm.group(1).strip().split(",")
-            if self.debug:
-                rich_print("valid [bold yellow]ciphers={}[/bold yellow]".format(self.ciphers))
-            # We didn't have a matching prompt character...
-            return None
-
-        #  no matching key exchange method found. Their offer: diffie-hellman-group14-sha1
-        mm = re.search(r"no\s+matching\s+key\s+exchange.+?offer:\s+(\S.+)$", after)
-        if mm is not None:
-            self.key_exchanges = mm.group(1).strip().split(",")
-            if self.debug:
-                rich_print("valid [bold yellow]key_exchanges={}[/bold yellow]".format(self.key_exchanges))
-            # We didn't have a matching prompt character...
-            return None
+        if self.debug:
+            rich_print("    matching_prompt is parsing: '{}'".format(after))
 
         # Check for a valid CLI prompt character...
         candidate_prompt = None
         if self.child.isalive():
             if self.debug:
-                rich_print("    [bold blue]iterating over lines in after.splitlines()[/bold blue]")
+                rich_print(
+                    "    [bold blue]matching_prompt is iterating over lines in after.splitlines()[/bold blue]"
+                )
+
+            # Process ssh session output line by line...
             for line in after.splitlines():
                 if self.debug:
-                    rich_print("        [bold blue]checking line='{}'[/bold blue]".format(line))
+                    rich_print(
+                        "        [bold blue]checking line='{}'[/bold blue]".format(line)
+                    )
                 line = line.strip()
-                if len(line)>0:
+                if len(line) > 0:
 
                     candidate_prompt = line[-1]
+                    prompt_hostname = line.strip()[0:-1]
 
                     if self.debug:
                         rich_print("    [bold blue]line='{}'[/bold blue]".format(line))
-                        rich_print("    [bold yellow]    candidate_prompt={}[/bold yellow]".format(candidate_prompt))
+                        rich_print(
+                            "    [bold yellow]    candidate_prompt='{}'[/bold yellow]".format(
+                                candidate_prompt
+                            )
+                        )
+                        rich_print(
+                            "    [bold yellow]    prompt_hostname='{}'[/bold yellow]".format(
+                                prompt_hostname
+                            )
+                        )
 
-                    if candidate_prompt in EXPECTED_LAST_PROMPT_CHARS:
-                        return candidate_prompt
+            if candidate_prompt in EXPECTED_LAST_PROMPT_CHARS:
+                if self.debug:
+                    rich_print(
+                        "    [bold blue]matching_prompt returning candidate_prompt='{}'[/bold blue]".format(
+                            candidate_prompt
+                        )
+                    )
+                return candidate_prompt
 
         else:
             candidate_prompt = None
@@ -540,62 +776,125 @@ class Shell(transitions.Machine):
         for cred in self.credentials:
             if self.debug:
                 rich_print("    [bold blue]Select credentials:[/bold blue]")
-                rich_print("        [bold yellow]{}[/bold yellow]".format(
-                    repr(cred)))
+                rich_print("        [bold yellow]{}[/bold yellow]".format(repr(cred)))
             yield cred
 
     def sync_prompt(self, require_detect_prompt=True):
         """Catch up with any queued prompts, we know to exit if we get a px.exceptions.TIMEOUT error"""
         if self.debug:
-            rich_print("[bold blue]sync_prompt(require_detect_prompt={}) called[/bold blue]".format(require_detect_prompt))
+            rich_print("")
+            rich_print("    [bold cyan]in sync_prompt()[/bold cyan]")
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
+
+        if self.debug:
+            rich_print(
+                "[bold blue]sync_prompt(require_detect_prompt={}) was called[/bold blue]".format(
+                    require_detect_prompt
+                )
+            )
 
         # self.detect_prompt() *should* come before self.sync_prompt()
-        if (self.prompt_str=="") and (require_detect_prompt is True):
-            raise PromptDetectionError("detect_prompt() must run before sync_prompt()")
+        if (self.prompt_hostname == "") and (require_detect_prompt is True):
+            if self.debug:
+                rich_print(
+                    "[bold blue]detect_prompt() has not assigned a prompt character to self.prompt_str[/bold blue]".format(
+                        self.prompt_str
+                    )
+                )
+                rich_print(
+                    "[bold red]self.prompt_str='{}'.[/bold red]".format(self.prompt_str)
+                )
+            raise PromptDetectionError(
+                "Please call detect_prompt() before sync_prompt()"
+            )
 
         # WARNING: use self.child.sendline(); do not use self.csendline() here
-        self.child.sendline('')
+        self.child.sendline("")
 
         finished = False
         while not finished:
             # Use a very short timeout here...
             # WARNING self.child.expect() is required; do not use self.cexpect()
+            index = -2
             try:
-                index = self.child.expect(self.base_prompt_regex, timeout=0.5)
+                index = self.child.expect(self.base_prompt_regex, timeout=2.0)
                 if self.debug:
-                    rich_print("    [bold blue]sync_prompt() index={}[/bold blue]".format(index))
+                    rich_print(
+                        "    [bold blue]sync_prompt() index={}[/bold blue]".format(
+                            index
+                        )
+                    )
+
             except px.exceptions.TIMEOUT:
                 # We got an EOF or TIMEOUT error...
                 self.login_attempts = 0
                 finished = True
+
             except px.exceptions.EOF:
                 # We got an EOF or TIMEOUT error...
                 self.login_attempts = 0
                 finished = True
 
-            if index==-1:
+            except Exception as ee:
+                print("ERROR: %s" % ee)
+
+            if index == -2:
+                finished = True
+
+            elif index == -1:
                 # We got an EOF or TIMEOUT error...
                 self.login_attempts = 0
                 finished = True
 
-            elif (index==0 or index==1 or index==2 or index==3):
-                raise UnexpectedPrompt("Unexpected state in sync_prompt(): {}".format(self.matching_prompt))
+            elif index == 0:
+                if self.debug:
+                    rich_print(
+                        "[bold red]sync_prompt() - found an ssh cipher error[/bold red]".format(
+                            index
+                        )
+                    )
 
-            elif index==4:
-                # We should only get to this prompt if auto_priv_mode is 
+            elif index == 1:
+                if self.debug:
+                    rich_print(
+                        "[bold red]sync_prompt() - found an ssh key exchange error[/bold red]".format(
+                            index
+                        )
+                    )
+
+            elif index == 2 or index == 3:
+                if self.debug:
+                    rich_print(
+                        "[bold red]sync_prompt() - Unexpected index='{}'[/bold red]".format(
+                            index
+                        )
+                    )
+
+            elif index == 4:
+                # We should only get to this prompt if auto_priv_mode is
                 #     False
                 self.login_attempts = 0
-            elif index==5:
-                # We should only get to this prompt if auto_priv_mode is 
+                finished = True
+
+            elif index == 5:
+                # We should only get to this prompt if auto_priv_mode is
                 #     False
                 self.login_attempts = 0
-            elif index==6:
-                # We don't need to attempt any more logins if we have 
+                finished = True
+
+            elif index == 6:
+                # We don't need to attempt any more logins if we have
                 #     a priv prompt
                 self.login_attempts = 0
+                print("BARMEBAR")
+                finished = True
+
             else:
                 raise NotImplementedError()
-
 
     def close(self):
         self.child.close()
@@ -605,102 +904,202 @@ class Shell(transitions.Machine):
         """detect_prompt() checks for premature entry into LOGIN_COMPLETE and also looks for a prompt string"""
         # Detect the prompt as best-possible...
         if self.debug:
-            rich_print("[bold blue]detect_prompt() called[/bold blue]")
+            rich_print("")
+            rich_print("    [bold cyan]in detect_prompt()[/bold cyan]")
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
 
-        abbv_prompt_list = [r'sername:', r'[Pp]assword[^\r\n]{0,20}?:', r'>', re.escape('$'), 
-            re.escape('#')]
-
-        #self.csendline('')  # FIXME I might need to delete this...
+        if self.debug:
+            rich_print(
+                "    [bold blue]detect_prompt() using prompt detection heuristics[/bold blue]"
+            )
+            rich_print(
+                "    [bold blue]detect_prompt() is trying to find detailed prompt information.  Sending a blank line to {}[/bold blue]".format(
+                    self.host
+                )
+            )
+        self.csendline("")  # FIXME I might need to delete this...
 
         # Double check that this isn't a pre-login banner...
-        ii = 0
+        loop_counter = 0
         finished = False
+        if self.debug:
+            rich_print("    [bold blue]detect_prompt() starting while loop[/bold blue]")
         while not finished:
             # Use a very short timeout here...
             # WARNING use self.child.expect()... do not use self.cexpect()
+            if self.debug:
+                rich_print(
+                    "        [bold blue]in while loop (finished=False)[/bold blue]"
+                )
             try:
-                ii += 1  # Keep track of how many times we loop through input
-                index = self.child.expect(abbv_prompt_list, timeout=1)
+                loop_counter += 1  # Keep track of how many times we loop through input
+
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]while loop_counter={}[/bold blue]".format(
+                            loop_counter
+                        )
+                    )
+                    rich_print("        [bold blue]calling cexpect()[/bold blue]")
+                # index = self.child.expect(abbv_prompt_list, timeout=1)
+                index = self.child.expect(self.base_prompt_regex, timeout=1)
+
             except px.exceptions.TIMEOUT:
                 assert self.child.isalive()
                 if self.debug:
-                    rich_print("[bold blue]    detect_prompt() pre-login finished because it found TIMEOUT condition while looking for abbv_prompt_list[/bold blue]")
+                    rich_print(
+                        "[bold blue]        detect_prompt() pexpect.TIMEOUT[/bold blue]"
+                    )
                 index = -1
                 finished = True
+
             except px.exceptions.EOF:
                 if self.debug:
-                    rich_print("[bold blue]    detect_prompt() pre-login finished because it found EOF condition while looking for abbv_prompt_list[/bold blue]")
+                    rich_print(
+                        "[bold blue]        detect_prompt() pexpect.EOF[/bold blue]"
+                    )
                 index = -1
                 finished = True
 
-            if index==-1:
+            if index == -1:
                 assert self.child.isalive()
                 if self.debug:
-                    rich_print("[bold blue]    detect_prompt() index={}[/bold blue]".format(index))
+                    rich_print("")
+                    rich_print(
+                        "[bold blue]        detect_prompt() index={}[/bold blue]".format(
+                            index
+                        )
+                    )
 
-            elif index==0:
+            elif index == 0 or index == 1:
+                # This is an ssh-cipher or ssh key-exchange problem....
+                #    fail for now, handle this later if important...
+                if self.debug:
+                    rich_print("")
+                    rich_print(
+                        "[bold blue]        detect_prompt() index={}[/bold blue]".format(
+                            index
+                        )
+                    )
+                raise NotImplementedError()
+
+            elif index == 2:
                 assert self.child.isalive()
-                # We probably went to detect_prompt() based on some banner
+                # We probably want to detect_prompt() based on some banner
                 # This should be a username prompt...
                 if self.debug:
-                    rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_USERNAME[/bold blue]")
+                    rich_print("")
+                    rich_print(
+                        "[bold blue]        detect_prompt() index={}[/bold blue]".format(
+                            index
+                        )
+                    )
+                    rich_print(
+                        "        [bold blue]detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_USERNAME[/bold blue]"
+                    )
                 self._go_SEND_LOGIN_USERNAME()
 
-            elif index==1:
+            elif index == 3:
                 assert self.child.isalive()
                 # We probably went to detect_prompt() based on some banner
                 # This should be a password prompt...
                 if self.debug:
-                    rich_print("[bold blue]    detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_PASSWORD[/bold blue]")
+                    rich_print("")
+                    rich_print(
+                        "[bold blue]        detect_prompt() index={}[/bold blue]".format(
+                            index
+                        )
+                    )
+                    rich_print(
+                        "        [bold blue]detect_prompt() found a premature entry into detect_prompt().  Redirecting to state SEND_LOGIN_PASSWORD[/bold blue]"
+                    )
 
                 self._go_SEND_LOGIN_PASSWORD()
 
-            elif index>1:
-                # We got a non-user, non-password prompt... exit this loop!
+            elif index > 3:
+                # We got a non-username, non-password prompt... exit this loop!
                 # Start prompt detection heuristics...
                 if self.debug:
-                    finished = True
+                    # We got a non-username, non-password prompt... exit this loop!
+                    rich_print("")
+                    rich_print(
+                        "        [bold blue]detect_prompt() index={}[/bold blue]".format(
+                            index
+                        )
+                    )
+                    rich_print(
+                        "        [bold blue]detect_prompt() found a non-username, non-password prompt... exit the while loop.[/bold blue]"
+                    )
+                    rich_print(
+                        "        [bold blue]detect_prompt() set finished=True[/bold blue]"
+                    )
+                finished = True
+
+            else:
+                raise ValueError
 
             if self.debug:
-                rich_print("    [bold blue]detect_prompt() loop={}".format(ii))
+                rich_print("")
+                rich_print(
+                    "        [bold blue]detect_prompt() loop_counter={}".format(
+                        loop_counter
+                    )
+                )
 
         if self.debug:
-            rich_print("\n    [bold blue]detect_prompt() finished the while loop after {} iterations. Detected prompt index={}[/bold blue]".format(ii, index))
-            rich_print("    [bold blue]detect_prompt() using prompt detection heuristics[/bold blue]")
+            rich_print("")
+            rich_print(
+                "\n    [bold blue]detect_prompt() finished the while loop after {} iterations. Detected prompt index={}[/bold blue]".format(
+                    loop_counter, index
+                )
+            )
+
         # WARNING: use self.child.sendline(); do not use self.csendline() here
-        self.child.sendline('')
+        self.child.sendline("")
 
         ### Start building prompt_str and base_prompt_regex
         # Use a very short timeout here
         # WARNING self.child.expect() is required; do not use self.cexpect()
         try:
-            # replaced self.base_prompt_regex with abbv_prompt_list
-            index = self.child.expect(abbv_prompt_list, timeout=1)
+            index = self.child.expect(self.base_prompt_regex, timeout=1)
+            assert index >= 4  # Ensure we are at an unpriv or priv prompt
+
         except px.exceptions.TIMEOUT:
             assert self.child.isalive()
             if self.debug:
-                rich_print("[bold blue]    detect_prompt() pre-login finished.  Hit TIMEOUT condition[/bold blue]")
+                rich_print(
+                    "[bold blue]    detect_prompt() pre-login finished.  Hit TIMEOUT condition[/bold blue]"
+                )
+
         except px.exceptions.EOF:
             assert self.child.isalive()
             if self.debug:
-                rich_print("[bold blue]    detect_prompt() pre-login finished.  Hit EOF condition[/bold blue]")
+                rich_print(
+                    "[bold blue]    detect_prompt() pre-login finished.  Hit EOF condition[/bold blue]"
+                )
 
         ## Example of prompt detection on route-views.oregon-ix.org...
-        hostname = self.child.before.strip()  # detect hostname    = route-views
-        prompt_char = self.child.after.strip()# detect prompt_char = >
-        hostname_output_list = hostname.splitlines()
-        if len(hostname_output_list)==0:
-            prompt_str = ""   # This is bad... we don't want to hit this...
-        elif len(hostname_output_list)==1:
-            prompt_str = hostname_output_list[0]
-        elif len(hostname_output_list)>1:
-            prompt_str = hostname_output_list[-1] # Get the last entry in list
-        else:
-            raise PromptDetectionError()
-        self.prompt_str = prompt_str
+        # hostname = self.child.before.strip()  # detect hostname    = route-views
+        assert isinstance(self.child.after, str)
+        hostname = self.child.after.strip()
 
+        assert len(hostname.splitlines()) > 0
+        # Set the hostname
+        self.prompt_hostname = hostname.splitlines()[-1].strip()[0:-1]
         if self.debug:
-            rich_print("\n        [bold blue]detect_prompt() found prompt_str:[/bold blue] '{}'".format(self.prompt_str))
+            rich_print("")
+            rich_print(
+                "[bold blue]    detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
+                    self.prompt_hostname
+                )
+            )
+
+        # Find the last non-whitespace character and use it as the prompt
+        self.prompt_str = hostname.splitlines()[-1].strip()[-1]
 
         self.build_base_prompt_regex()  # Adjust the prompt regex after detection
 
@@ -708,99 +1107,165 @@ class Shell(transitions.Machine):
 
     def build_base_prompt_regex(self):
         """Assign self.base_prompt_regex with the latest prompt info"""
-        if self.debug:
-            rich_print("[bold blue]build_base_prompt_regex() called[/bold blue]")
-            rich_print("    [bold blue]self.prompt_str should not have the ending character (like ':', '>', '#', '$')[/bold blue]")
-            rich_print("    [bold blue]self.prompt_str='{}'[/bold blue]".format(
-                self.prompt_str))
 
-        if self.debug:
-            rich_print("    [bold blue]while not end_loop_bool[/bold blue]")
-
-        self.linux_prompt = r'[\n\r]+{0}[^{1}]*?{1}\s*'.format(re.escape(
-            self.prompt_str), re.escape('$'))
+        self.linux_prompt = r"[\n\r]+{0}[^{1}]*?{1}\s*".format(
+            re.escape(self.prompt_hostname), re.escape("$")
+        )
 
         self.base_prompt_regex = [
             # Unable to negotiate with 172.16.1.3 port 22: no matching cipher found. Their offer: aes128-cbc,3des-cbc,aes192-cbc,aes256-cbc
-            r'no\s+matching\s+cipher\s+found.*$',
+            r"no\s+matching\s+cipher\s+found.*$",
             # no matching key exchange method found. Their offer: diffie-hellman-group14-sha1
-            r'no\s+matching\s+key\s+exchange\s+method\s+found\..*$',
-            r'sername:', r'[Pp]assword[^\r\n]{0,20}?:',
-            #r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str), 
-            r'[\n\r]+{0}.*?>\s*'.format(re.escape(self.prompt_str)),
-            #linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
-            self.linux_prompt, r'[\n\r]+{0}.*?{1}\s*'.format(
-            re.escape(self.prompt_str), re.escape('#'))]
+            r"no\s+matching\s+key\s+exchange\s+method\s+found\..*$",
+            r"sername:",
+            r"[Pp]assword[^\r\n]{0,20}?:",
+            # r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str),
+            r"[\n\r]+{0}.*?>\s*".format(re.escape(self.prompt_hostname)),
+            # linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
+            self.linux_prompt,
+            r"[\n\r]+{0}.*?{1}\s*".format(
+                re.escape(self.prompt_hostname), re.escape("#")
+            ),
+        ]
 
         if self.debug:
             # Expand all base_prompt_regex terms...
-            rich_print("        [bold blue]self.base_prompt_regex = {}[/bold blue]".format("[["))
+            rich_print(
+                "        [bold blue]self.base_prompt_regex = {}[/bold blue]".format(
+                    "[["
+                )
+            )
             for idx, term in enumerate(self.base_prompt_regex):
-                rich_print("            [bold blue]{} {},[/bold blue]".format(
-                    idx, repr(term)))
+                rich_print(
+                    "            [bold blue]{} {},[/bold blue]".format(idx, repr(term))
+                )
             rich_print("        [bold blue]{}[/bold blue]".format(str("]]")))
 
-
-        assert len(self.base_prompt_regex)==BASE_PROMPT_REGEX_LENGTH
+        assert len(self.base_prompt_regex) == BASE_PROMPT_REGEX_LENGTH
         return self.base_prompt_regex
 
-    def after_SELECT_PROTOCOL_cb(self):
+    def after_SELECT_TCP_PROTOCOL_cb(self):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
         finished = False
         for ii in range(0, 3):
 
-            if finished:
+            if finished is True:
                 continue
 
             if self.debug:
                 rich_print("    [bold blue]var ii={}[/bold blue]".format(str(ii)))
             for proto_dict in self.iter_protocols():
                 self.proto_dict = proto_dict
-                proto_name, proto_port = proto_dict.get('proto'), proto_dict.get('port')
+                proto_name, proto_port = proto_dict.get("proto"), proto_dict.get("port")
                 if self.debug:
-                    rich_print("    [bold blue]Trying TCP socket to {} port {}[/bold blue]".format(self.host, proto_port))
-                with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as proto_sock:
+                    rich_print(
+                        "    [bold blue]Trying TCP socket to {} port {}[/bold blue]".format(
+                            self.host, proto_port
+                        )
+                    )
+                with closing(
+                    socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                ) as proto_sock:
                     proto_sock.settimeout(3)
                     try:
-                        if proto_sock.connect_ex((self.host, proto_port))==0:
+                        if proto_sock.connect_ex((self.host, proto_port)) == 0:
                             ## We completed a tcp connection to proto_port...
                             ##   now, get the credentials
                             if self.debug:
-                                rich_print("    [bold blue]SUCCESS: port {}[/bold blue]".format(proto_port))
+                                rich_print(
+                                    "    [bold blue]SUCCESS: port {}[/bold blue]".format(
+                                        proto_port
+                                    )
+                                )
                             finished = True
                             break
                     except socket.gaierror:
                         raise Exception("'{}' is an unknown hostname".format(self.host))
 
-                if ((ii==0) or (ii==1)) and (finished is False):
-                   
-                    time.sleep(self.relogin_delay)  # Give the host time to recover from auto-login
+                    except Exception as ee:
+                        raise Exception(ee)
 
-        if (finished is False):
+                if ((ii == 0) or (ii == 1)) and (finished is False):
+
+                    time.sleep(
+                        self.relogin_delay
+                    )  # Give the host time to recover from auto-login
+
+        if finished is False:
             raise Exception("Cannot connect to host: '{}'".format(self.host))
         else:
+            if self.debug:
+                rich_print(
+                    "    [bold blue]after_SELECT_TCP_PROTOCOL_cb() is getting credentials from after_SELECT_LOGIN_CREDENTIALS_cb()[/bold blue]"
+                )
             self._go_SELECT_LOGIN_CREDENTIALS()  # Get the proper credentials
 
     def after_SELECT_LOGIN_CREDENTIALS_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
-        while self.login_attempts>=0:
+        if self.debug:
+            rich_print(
+                "    [bold blue]after_SELECT_LOGIN_CREDENTIALS_cb() is using a while loop to iterate through attempted credentials[/bold blue]"
+            )
+        while self.login_attempts > 0:
+            if self.debug:
+                rich_print(
+                    "    [bold blue]after_SELECT_LOGIN_CREDENTIALS_cb() login_attempts={}[/bold blue]".format(
+                        self.login_attempts
+                    )
+                )
             cred = next(self.credentials_iterator)
+            if self.debug:
+                rich_print(
+                    "        [bold blue]after_SELECT_LOGIN_CREDENTIALS_cb() self.username={}[/bold blue]".format(
+                        cred.user
+                    )
+                )
+                rich_print(
+                    "        [bold blue]after_SELECT_LOGIN_CREDENTIALS_cb() self.password={}[/bold blue]".format(
+                        cred.passwd
+                    )
+                )
+                rich_print(
+                    "        [bold blue]after_SELECT_LOGIN_CREDENTIALS_cb() self.ssh_key={}[/bold blue]".format(
+                        cred.ssh_key
+                    )
+                )
             self.username = cred.user
             self.password = cred.passwd
             self.ssh_key = cred.ssh_key
 
             if self.child is not None:
-                self.close()      # Make way for a fresh child instance
+                if self.debug:
+                    rich_print(
+                        "    [bold yellow]after_SELECT_LOGIN_CREDENTIALS_cb() is closing the current connection[/bold yellow]".format(
+                            cred.passwd
+                        )
+                    )
+                self.close()  # Make way for a fresh child instance
 
+            if self.debug:
+                rich_print(
+                    "    [bold blue]after_SELECT_LOGIN_CREDENTIALS_cb() is calling after_CONNECT_cb()[/bold blue]".format(
+                        cred.passwd
+                    )
+                )
             self._go_CONNECT()
 
             self.login_attempts -= 1
@@ -809,21 +1274,52 @@ class Shell(transitions.Machine):
         """Build an ssh / telnet session to self.host"""
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
         if self.child is not None:
+            if self.debug:
+                rich_print(
+                    "[bold yellow]after_CONNECT_cb() is closing the existing connection."
+                )
             self.close()
 
         # run the ssh or telnet command
         ready_for_login = False
         while ready_for_login is False:
+
             try:
                 self.build_connect_cmd()
+
+                # Very strange things happen unless this is here...
+                #      Transition from LOGIN_COMPLETE to spawning ssh????
+                if self.state == "LOGIN_COMPLETE":
+                    if self.debug:
+                        rich_print(
+                            "[bold magenta]Bypassing strange detour to after_CONNECT_cb()[/bold magenta]".format(
+                                self.connect_cmd
+                            )
+                        )
+                    ready_for_login = True
+                    return None
+
                 if self.debug:
-                    rich_print("  [bold blue]pexpect.spawn([/bold blue]'{}'[bold blue])[/bold blue]".format(self.connect_cmd))
-                self.child = px.spawn(self.connect_cmd, timeout=self.login_timeout,
-                    encoding=self.encoding)
+                    rich_print(
+                        "    [bold blue]after_CONNECT_cb() is calling pexpect.spawn()[/bold blue]"
+                    )
+                    rich_print(
+                        "    [bold blue]pexpect.spawn([/bold blue]'{}'[bold blue])[/bold blue]".format(
+                            self.connect_cmd
+                        )
+                    )
+
+                self.child = px.spawn(
+                    self.connect_cmd, timeout=self.login_timeout, encoding=self.encoding
+                )
 
             except px.exceptions.EOF as ee:
                 time.sleep(70)
@@ -831,67 +1327,127 @@ class Shell(transitions.Machine):
             # Ensure the pexpect connection is alive.
             try:
                 assert self.child.isalive()
-                rich_print("    [bold green]after_CONNECT_cb()\n        Connection is alive with connect_cmd='%s'[/bold green]" % self.connect_cmd)
+
             except AssertionError as ee:
-                rich_print("    [bold red]after_CONNECT_cb()\n        FATAL: connection is not alive. Error: %s[/bold red]" % str(ee))
+                rich_print(
+                    "    [bold red]after_CONNECT_cb()\n        FATAL Assertion: self.child.isalive().\n        AssertionError: %s[/bold red]"
+                    % str(ee)
+                )
+                sys.exit(1)
 
             # log to screen if requested
-            if self.log_screen and self.log_file=="":
-                 self.child.logfile = sys.stdout
+            if self.log_screen and self.log_file == "":
+                self.child.logfile = sys.stdout
 
             # log to file if requested
-            elif (self.log_screen is False) and self.log_file!="":
-                self.child.logfile = open(self.log_file, 'w')
+            elif (self.log_screen is False) and self.log_file != "":
+                self.child.logfile = open(self.log_file, "w")
 
             # log to both screen and file if requested
-            elif (self.log_screen is True) and self.log_file!="":
-                self.child.logfile = TeeStdoutFile(log_file=self.log_file,
-                log_screen=self.log_screen)
+            elif (self.log_screen is True) and self.log_file != "":
+                self.child.logfile = TeeStdoutFile(
+                    log_file=self.log_file, log_screen=self.log_screen
+                )
 
             if self.debug:
-                rich_print("    [bold blue]Call cexpect() from after_CONNECT_cb()[/bold blue]")
-
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() calling cexpect()[/bold blue]"
+                )
             index = self.cexpect(self.base_prompt_regex, timeout=self.login_timeout)
 
             if self.debug:
-                rich_print("       [bold blue]self.cexpect() matched prompt index=[/bold blue]{}".format(index))
-                rich_print("       [bold blue]self.cexpect() matching prompt:[/bold blue]'{}'".format(self.base_prompt_regex[index]))
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() call to cexpect() returned index={}[/bold blue]".format(
+                        index
+                    )
+                )
 
-            if index==-1:
-                time.sleep(70)
+            # Fix ssh cipher and key exchange problems and re-spawn ssh...
+            if self.modify_ssh_parameters() is True:
+                if self.debug:
+                    rich_print(
+                        "[bold yellow]modify_ssh_parameters() is closing and reconfiguring ssh[/bold yellow]"
+                    )
+                self.close()
                 self.build_connect_cmd()
+
+                if self.debug:
+                    rich_print(
+                        "    [bold blue]after_CONNECT_cb() calling itself[/bold blue]"
+                    )
                 self._go_CONNECT()
 
-            elif index==0:
-                # base_prompt_regex found mismatched ssh ciphers... rebuild connect command
-                if self.debug:
-                    rich_print("       [bold yellow]changing ssh ciphers[/bold yellow] prompt index={}".format(index))
-                self.build_connect_cmd()
-                self._go_CONNECT()   # Spawn connect command again
+            # Do *not* delete or move self.match_prompt; cipher & key exchange detection is there
+            # self.matching_prompt
 
-            elif index==1:
-                # base_prompt_regex found mismatched ssh key exchange... rebuild connect command
+            # FIXME - prompt index should NOT be zero here... need to know why
+            if self.debug:
+                rich_print(
+                    "        [bold blue]self.cexpect() matched prompt index=[/bold blue]{}".format(
+                        index
+                    )
+                )
+                rich_print(
+                    "        [bold blue]self.cexpect() matching prompt:[/bold blue]'{}'".format(
+                        self.base_prompt_regex[index]
+                    )
+                )
+
+            if index == -1:
                 if self.debug:
-                    rich_print("       [bold yellow]changing ssh key exchange[/bold yellow] prompt index={}".format(index))
+                    rich_print(
+                        "    [bold blue]after_CONNECT_cb() did not match a prompt.[/bold blue]"
+                    )
+                    rich_print(
+                        "    [bold blue]after_CONNECT_cb() is sleeping for 70 seconds.[/bold blue]"
+                    )
+                time.sleep(70)
                 self.build_connect_cmd()
-                self._go_CONNECT()   # Spawn connect command again
+                if self.debug:
+                    rich_print(
+                        "    [bold blue]after_CONNECT_cb() calling itself[/bold blue]"
+                    )
+                self._go_CONNECT()
 
             elif index >= 2:
                 # Exit while() loop... ready for username / password...
                 ready_for_login = True
 
-
-        if index==2:
+        if index == 2:
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() calling after_SEND_LOGIN_USERNAME_cb()[/bold blue]"
+                )
             self._go_SEND_LOGIN_USERNAME()
-        elif index==3:
+        elif index == 3:
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() calling after_SEND_LOGIN_PASSWORD_cb()[/bold blue]"
+                )
             self._go_SEND_LOGIN_PASSWORD()
-        elif index==4:
+        elif index == 4:
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() calling after_LOGIN_SUCCESS_UNPRIV_cb()[/bold blue]"
+                )
             self._go_LOGIN_SUCCESS_UNPRIV()
-        elif index==5:
-            # Login linux prompt=$
+        elif index == 5:
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() calling after_LOGIN_SUCCESS_UNPRIV_cb()[/bold blue]"
+                )
             self._go_LOGIN_SUCCESS_UNPRIV()
-        elif index==6:
+        elif index == 6:
             # Login priv in router prompt=#
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]after_CONNECT_cb() calling _after_LOGIN_SUCCESS_PRIV_cb()[/bold blue]"
+                )
             self._go_LOGIN_SUCCESS_PRIV()
         else:
             raise NotImplementedError()
@@ -899,47 +1455,113 @@ class Shell(transitions.Machine):
     def after_SEND_LOGIN_PASSWORD_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
         self.csendline(self.password)
 
         try:
 
-            assert len(self.base_prompt_regex)==BASE_PROMPT_REGEX_LENGTH
-            index = self.cexpect(self.base_prompt_regex,
-                timeout=self.login_timeout)
+            assert len(self.base_prompt_regex) == BASE_PROMPT_REGEX_LENGTH
+            if self.debug:
+                rich_print(
+                    "    [bold blue]after_SEND_LOGIN_PASSWORD_cb() calling cexpect()[/bold blue]"
+                )
+            index = self.cexpect(self.base_prompt_regex, timeout=self.login_timeout)
 
             if self.debug:
-                rich_print("\n   [bold blue]after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
-                rich_print("\n   [bold blue]after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matching_ prompt:[/bold blue] {}".format(repr(self.base_prompt_regex[index])))
+                rich_print(
+                    "\n   [bold blue]after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(
+                        index
+                    )
+                )
+                rich_print(
+                    "\n   [bold blue]after_SEND_LOGIN_PASSWORD_cb() - self.child.expect() matching_ prompt:[/bold blue] {}".format(
+                        re.escape(self.base_prompt_regex[index])
+                    )
+                )
 
             assert index >= 2
 
-            print("HERE %s" % index)
-            if index==0:  # This was the wrong ssh cipher...
+            if index == 0:  # This was the wrong ssh cipher...
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Closing connection.[/bold blue]".format(
+                            index
+                        )
+                    )
                 self.close()
                 raise NotImplementedError()
 
-            elif index==1: # This was the wrong ssh key exchange...
+            elif index == 1:  # This was the wrong ssh key exchange...
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Closing connection.[/bold blue]".format(
+                            index
+                        )
+                    )
                 self.close()
                 raise NotImplementedError()
 
-            elif index==2:
-                self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
+            elif index == 2:
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Calling after_SELECT_LOGIN_CREDENTIALS_cb()[/bold blue]".format(
+                            index
+                        )
+                    )
+                foo_credentials = (
+                    self._go_SELECT_LOGIN_CREDENTIALS()
+                )  # Restart login with different creds
+                rich_print("[bold red]{}[/bold red]".format(foo_credentials))
+
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Calling after_SEND_LOGIN_USERNAME_cb()[/bold blue]".format(
+                            index
+                        )
+                    )
                 self._go_SEND_LOGIN_USERNAME()
 
-            elif index==3:
+            elif index == 3:
                 # Send login password again... just in case...
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Calling itself with the same password.[/bold blue]".format(
+                            index
+                        )
+                    )
                 self._go_SEND_LOGIN_PASSWORD()
 
-            elif index==4:
+            elif index == 4:
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Calling after_LOGIN_SUCCESS_UNPRIV_cb()[/bold blue]".format(
+                            index
+                        )
+                    )
                 self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt
 
-            elif index==5:
+            elif index == 5:
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Calling after_LOGIN_SUCCESS_UNPRIV_cb()[/bold blue]".format(
+                            index
+                        )
+                    )
                 self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt
 
-            elif index==6:
+            elif index == 6:
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]after_SEND_LOGIN_PASSWORD_cb() found index={}.  Calling after_LOGIN_SUCCESS_PRIV_cb()[/bold blue]".format(
+                            index
+                        )
+                    )
                 self._go_LOGIN_SUCCESS_PRIV()  # We got a priv prompt
 
             else:
@@ -947,51 +1569,74 @@ class Shell(transitions.Machine):
 
         except px.exceptions.EOF:
             if self.debug:
-                rich_print("   [bold red]after_SEND_LOGIN_PASSWORD_cb() - pexpect.exceptions.EOF error[/bold red]")
+                rich_print(
+                    "   [bold red]after_SEND_LOGIN_PASSWORD_cb() - pexpect.exceptions.EOF error[/bold red]"
+                )
             self.close()
-            #self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
+            # self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
             self._go_CONNECT()  # Restart login with different creds
 
         except px.exceptions.TIMEOUT:
             if self.debug:
-                rich_print("   [bold red]after_SEND_LOGIN_PASSWORD_cb() - pexpect error: TIMEOUT[/bold red]")
+                rich_print(
+                    "   [bold red]after_SEND_LOGIN_PASSWORD_cb() - pexpect error: TIMEOUT[/bold red]"
+                )
             self.close()
-            #self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
+            # self._go_SELECT_LOGIN_CREDENTIALS()  # Restart login with different creds
+            if self.debug:
+                rich_print(
+                    "    [bold blue]after_SEND_LOGIN_PASSWORD_cb() calling after_CONNECT_cb()[/bold blue]"
+                )
             self._go_CONNECT()  # Restart login with different creds
 
     def after_SEND_LOGIN_USERNAME_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
         self.csendline(self.username)
 
-        index = self.cexpect(self.base_prompt_regex,
-            timeout=self.login_timeout)
+        if self.debug:
+            rich_print(
+                "    [bold blue]after_SEND_LOGIN_USERNAME_cb() calling cexpect()[/bold blue]"
+            )
+        index = self.cexpect(self.base_prompt_regex, timeout=self.login_timeout)
 
         if self.debug:
-            rich_print("   [bold blue]after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
-            rich_print("   [bold blue]after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matching_prompt:[/bold blue] {}".format(self.base_prompt_regex[index]))
+            rich_print(
+                "   [bold blue]after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(
+                    index
+                )
+            )
+            rich_print(
+                "   [bold blue]after_SEND_LOGIN_USERNAME_cb() - self.child.expect() matching_prompt:[/bold blue] {}".format(
+                    self.base_prompt_regex[index]
+                )
+            )
 
         assert index >= 2  # We at least got another username prompt...
-        #if index==0:
+        # if index==0:
         #    self._go_SELECT_LOGIN_CREDENTIALS()
 
-        if index==2:
+        if index == 2:
             self._go_SEND_LOGIN_USERNAME()
 
-        elif index==3:
+        elif index == 3:
             self._go_SEND_LOGIN_PASSWORD()
 
-        elif index==4:
+        elif index == 4:
             self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
 
-        elif index==5:
+        elif index == 5:
             self._go_LOGIN_SUCCESS_UNPRIV()  # We got an unpriv prompt here
 
-        elif index==6:
-            self._go_LOGIN_SUCCESS_PRIV()    # We got a priv prompt here
+        elif index == 6:
+            self._go_LOGIN_SUCCESS_PRIV()  # We got a priv prompt here
 
         else:
             raise NotImplementedError()
@@ -999,110 +1644,189 @@ class Shell(transitions.Machine):
     def after_LOGIN_SUCCESS_UNPRIV_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
-        self.csendline('')
+        # OLD FIXME
+        # if self.debug:
+        #    rich_print("   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - csendline("") <- blank line[/bold blue]}")
+        # self.csendline('')
 
-        index = self.cexpect(self.base_prompt_regex,
-            timeout=self.command_timeout)
+        # index = self.cexpect(self.base_prompt_regex,
+        #    timeout=self.command_timeout)
 
         if self.debug:
-            rich_print("   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
-            rich_print("   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matching_prompt:[/bold blue] {}".format(self.base_prompt_regex[index]))
+            rich_print(
+                "    [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() calling detect_prompt()[/bold blue]"
+            )
+        self.detect_prompt()
 
-        assert index >= 3
-        if index==3:
-            self._go_SEND_PRIV_PASSWORD()
+        if False:
+            if self.debug and False:
+                rich_print(
+                    "   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(
+                        index
+                    )
+                )
+                rich_print(
+                    "   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - self.child.expect() matching_prompt:[/bold blue] {}".format(
+                        self.base_prompt_regex[index]
+                    )
+                )
 
-        elif index==4:
-            # Got a '>' prompt
-            self._go_LOGIN_COMPLETE()  # FIXME - is this the right call?
+            assert index >= 3
+            if index == 3:
+                if self.debug:
+                    rich_print(
+                        "    [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() calling after_SEND_PRIV_PASSWORD_cb()[/bold blue]"
+                    )
+                # Got a 'assword:' prompt
+                self._go_SEND_PRIV_PASSWORD()
 
-        elif index==5:
-            # Got a '$' prompt
-            raise Exception("index=5 Don't know what to do here")
+            elif index == 4:
+                # Got a '>' prompt
+                if self.debug:
+                    rich_print(
+                        "    [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() calling after_LOGIN_COMPLETE_cb()[/bold blue]"
+                    )
+                self._go_LOGIN_COMPLETE()  # FIXME - is this the right call?
 
-        elif index==6:
-            self._go_LOGIN_SUCCESS_PRIV()    # We got a priv prompt here
+            elif index == 5:
+                # Got a '$' prompt
+                if self.debug:
+                    rich_print(
+                        "    [bold red]after_LOGIN_SUCCESS_UNPRIV_cb() hit a fatal exception[/bold red]"
+                    )
+                raise Exception("index=5 Don't know what to do here")
 
-        else:
-            raise NotImplementedError()
+            elif index == 6:
+                if self.debug:
+                    rich_print(
+                        "    [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() calling after_LOGIN_SUCCESS_PRIV_cb()[/bold blue]"
+                    )
+                self._go_LOGIN_SUCCESS_PRIV()  # We got a priv prompt here
 
+            else:
+                raise NotImplementedError()
+
+        if self.debug:
+            rich_print(
+                "    [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() calling after_LOGIN_COMPLETE_cb()[/bold blue]"
+            )
         self._go_LOGIN_COMPLETE()
 
     def after_SEND_PRIV_PASSWORD_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
         self.csendline(self.password)
 
-        index = self.cexpect(self.base_prompt_regex,
-            timeout=self.command_timeout)
+        if self.debug:
+            rich_print(
+                "    [bold blue]after_SEND_PRIV_PASSWORD_cb() calling cexpect()[/bold blue]"
+            )
+        index = self.cexpect(self.base_prompt_regex, timeout=self.command_timeout)
 
         if self.debug:
-            rich_print("   [bold blue]after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(index))
-            rich_print("   [bold blue]after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matching_prompt:[/bold blue] {}".format(self.base_prompt_regex[index]))
+            rich_print(
+                "   [bold blue]after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matched prompt index:[/bold blue] {}".format(
+                    index
+                )
+            )
+            rich_print(
+                "   [bold blue]after_SEND_PRIV_PASSWORD_cb() - self.child.expect() matching_prompt:[/bold blue] {}".format(
+                    self.base_prompt_regex[index]
+                )
+            )
 
-        if index==0:
+        if index == 0:
             raise UnexpectedPrompt("Unexpected prompt: 'name:'")
-        elif index==1:
+        elif index == 1:
             self._go_SEND_PRIV_PASSWORD()
-        elif index==2:
+        elif index == 2:
             raise UnexpectedPrompt("Unexpected prompt: '>'")
-        elif index==3:
+        elif index == 3:
             raise UnexpectedPrompt("Unexpected prompt: '$'")
-        elif index==4:
-            self._go_LOGIN_SUCCESS_PRIV()    # We got a priv prompt here
+        elif index == 4:
+            self._go_LOGIN_SUCCESS_PRIV()  # We got a priv prompt here
 
     def after_LOGIN_SUCCESS_PRIV_cb(self):
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
+
+        if self.prompt_hostname == "":
+            if self.debug:
+                rich_print("    [bold blue]self.prompt_hostname is empty.[/bold blue]")
+                rich_print(
+                    "    [bold blue]after_LOGIN_COMPLETE_cb() calling detect_prompt()[/bold blue]"
+                )
+            self.detect_prompt()  # detect_prompt() *should* come before sync_prompt()
 
         self._go_LOGIN_COMPLETE()
 
     def after_LOGIN_COMPLETE_cb(self):
         """Clean up on any queued command prompts and accept user commands"""
+        # Ensure we don't try to cycles through any more passwords...
+        self.login_attempts = 0
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
 
-        if self.debug:
-            rich_print("    [bold blue]Calling sync_prompt() from after_LOGIN_COMPLETE_cb()[/bold blue]")
-
-        self.detect_prompt() # detect_prompt() *should* come before sync_prompt()
-        self.sync_prompt()
+        assert self.prompt_hostname != ""
 
     def after_INTERACT_cb(self):
         """Allow unscripted interaction with the system"""
-        assert self.child.isalive()
 
         if self.debug:
-            rich_print("[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
-                self.state))
-        rich_print("[bold magenta]Enter INTERACT mode; use Cntl-] to escape[/bold magenta]")
-        self.child.interact(escape_character=chr(4),
-            input_filter=None, output_filter=interact_filter)
+            rich_print("")
+            rich_print(
+                "[bold blue]Entering state: [/bold blue][bold magenta]{}[/bold magenta]".format(
+                    self.state
+                )
+            )
+
+        assert self.child.isalive()
+        rich_print(
+            "[bold magenta]Enter INTERACT mode; use Cntl-] to escape[/bold magenta]"
+        )
+        self.child.interact(
+            escape_character=chr(4), input_filter=None, output_filter=interact_filter
+        )
 
 
-if __name__=='__main__':
+if __name__ == "__main__":
     sess = Shell(
-        host='route-views.oregon-ix.net',
-        credentials=(
-            Account(user='rviews', passwd=''),
-        ),
-
+        host="route-views.oregon-ix.net",
+        credentials=(Account(user="rviews", passwd=""),),
         log_screen=False,
         auto_priv_mode=False,
         debug=True,
-        )
-    sess.execute('term len 0')
-    values = sess.execute('show ip int brief', 
-        template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")
-    print("VALUES "+str(values))
+    )
+    sess.execute("term len 0")
+    values = sess.execute(
+        "show ip int brief",
+        template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""",
+    )
+    print("VALUES " + str(values))
     sess.close()
