@@ -490,10 +490,8 @@ class Shell(transitions.Machine):
             self.child.send(cmd)
 
         # Extend the list of cli_prompts if `prompts` was specified
-        # FIXME
-        # cli_prompts = self.base_prompt_regex
-        cli_prompts = self.build_base_prompt_regex()
-
+        self.build_base_prompt_regex()
+        cli_prompts = self.base_prompt_regex
         if prompts != ():
             assert isinstance(prompts, tuple)
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
@@ -505,7 +503,14 @@ class Shell(transitions.Machine):
                     cmd
                 )
             )
+
         index = self.cexpect(cli_prompts, timeout=command_timeout)
+
+        if self.debug:
+            rich_print(
+                "    [bold blue]execute() received %s from cexpect()[/bold blue]"
+                % index
+            )
 
         # Handle sudo password prompt...
         if False and index == 3:  # TODO remove False (and maybe all this under it)
@@ -637,6 +642,9 @@ class Shell(transitions.Machine):
                     )
                 )
                 rich_print("")
+                rich_print("    [bold blue]debugs from str(self.child):[/bold blue]")
+                for line in str(self.child).splitlines():
+                    rich_print("        [bold yellow]{0}[/bold yellow]".format(line))
 
         except px.exceptions.EOF:
             if self.debug:
@@ -890,7 +898,6 @@ class Shell(transitions.Machine):
                 # We don't need to attempt any more logins if we have
                 #     a priv prompt
                 self.login_attempts = 0
-                print("BARMEBAR")
                 finished = True
 
             else:
@@ -1108,8 +1115,28 @@ class Shell(transitions.Machine):
     def build_base_prompt_regex(self):
         """Assign self.base_prompt_regex with the latest prompt info"""
 
-        self.linux_prompt = r"[\n\r]+{0}[^{1}]*?{1}\s*".format(
+        self.linux_prompt = r"[\r\n]{0}[^{1}]*?{1}\s*".format(
             re.escape(self.prompt_hostname), re.escape("$")
+        )
+
+        ####### WARNING #######################################################
+        #   Getting this cisco unpriv prompt to work was extremely hard...
+        #   there is a bug somewhere that ignores the trailing ">" and
+        #   instead matches a space after the hostname.  I forced the
+        #   regex to match properly by stripping off the last character of
+        #   the hostname and used a non-space regex character instead.  Even
+        #   using \W+? is broken... I have to use \S+? to get the regex to
+        #   work.  Even a wildcard period (supposedly matches anything) instead
+        #   of \S doesn't work.
+        #######################################################################
+        cisco_unpriv_prompt_str = r"[\r\n]{0}\S+?{1}".format(
+            re.escape(self.prompt_hostname[:-1]), r">"
+        )
+        linux_prompt_str = r"[\r\n]{0}[^{1}]+{1}\s*".format(
+            re.escape(self.prompt_hostname[:-1]), re.escape("$")
+        )
+        cisco_priv_prompt_str = r"[\r\n]{0}\S+?{1}".format(
+            re.escape(self.prompt_hostname[:-1]), re.escape("#")
         )
 
         self.base_prompt_regex = [
@@ -1119,13 +1146,12 @@ class Shell(transitions.Machine):
             r"no\s+matching\s+key\s+exchange\s+method\s+found\..*$",
             r"sername:",
             r"[Pp]assword[^\r\n]{0,20}?:",
-            # r'[\n\r]+{}[^\n\r>]*?>\s*'.format(self.prompt_str),
-            r"[\n\r]+{0}.*?>\s*".format(re.escape(self.prompt_hostname)),
-            # linux_prompt, r'[\n\r]+{0}[^\n\r#]*?{1}\s*'.format(
-            self.linux_prompt,
-            r"[\n\r]+{0}.*?{1}\s*".format(
-                re.escape(self.prompt_hostname), re.escape("#")
-            ),
+            # Cisco unpriv prompt...
+            cisco_unpriv_prompt_str,
+            # linux prompt
+            linux_prompt_str,
+            # Cisco priv or linux root prompt...
+            cisco_priv_prompt_str,
         ]
 
         if self.debug:
