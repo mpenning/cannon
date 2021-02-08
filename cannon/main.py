@@ -2,6 +2,7 @@ from contextlib import closing
 from io import StringIO
 import platform
 import socket
+import uuid
 import time
 import sys
 import re
@@ -98,9 +99,11 @@ class Shell(transitions.Machine):
         credentials=(),
         ssh_keepalive=60,
         protocols=({"proto": "ssh", "port": 22}, {"proto": "telnet", "port": 23}),
+        mode="",
         auto_priv_mode=None,
         log_screen=False,
         log_file="",
+        strip_colors=True,
         debug=False,
         command_timeout=30,
         login_timeout=10,
@@ -155,25 +158,14 @@ class Shell(transitions.Machine):
         self.credentials_iterator = self.iter_credentials()
         self.proto_dict = {}
 
+        self.mode = mode
+        self.strip_colors = strip_colors
+
         self.prompt_hostname = ""
         self.prompt_str = ""  # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
-        # self.linux_prompt_capture = '([^\r\n{0}]+)\s*$'.format(re.escape('$'))
-        self.linux_prompt_capture = "[\r\n]*[^\r\n{0}]+\s*{0}".format(re.escape("$"))
         # Build the template before detecting prompt
         self.base_prompt_regex = self.build_base_prompt_regex()
-
-        # Define regex capture groups for the prompts above...
-        # NOTE there are no prompts in these strings..
-        self.base_prompt_regex_capture = [
-            ":",
-            ":",
-            "(\S[^\n\r>]+?)\s*$",
-            self.linux_prompt_capture,
-            "(\S[^\n\r{0}]+?)\s*$".format(re.escape("#")),
-        ]
-        #'(\S[^\n\r>]+?)\s*>', self.linux_prompt_capture,
-        #'(\S[^\n\r{0}]+?)\s*{0}'.format(re.escape('#'))]
 
         self.matching_prompt_regex = ""
         self.matching_prompt_regex_index = -1
@@ -768,7 +760,10 @@ class Shell(transitions.Machine):
 
     @property
     def response(self):
-        return self.child.before
+        if self.strip_colors:
+            return self.strip_text_colors(self.child.before)
+        else:
+            return self.child.before
 
     def exit(self):
         self.child.close()
@@ -918,6 +913,17 @@ class Shell(transitions.Machine):
                     self.state
                 )
             )
+
+        if self.mode=="linux":
+            self.change_linux_prompt()
+
+            # Catch up on missed prompts...
+            finished = False
+            while not finished:
+                try:
+                    self.child.expect(self.base_prompt_regex, timeout=1)
+                except:
+                    finished = True
 
         if self.debug:
             rich_print(
@@ -1115,27 +1121,20 @@ class Shell(transitions.Machine):
     def build_base_prompt_regex(self):
         """Assign self.base_prompt_regex with the latest prompt info"""
 
-        self.linux_prompt = r"[\r\n]{0}[^{1}]*?{1}\s*".format(
-            re.escape(self.prompt_hostname), re.escape("$")
-        )
-
         ####### WARNING #######################################################
         #   Getting this cisco unpriv prompt to work was extremely hard...
         #   there is a bug somewhere that ignores the trailing ">" and
         #   instead matches a space after the hostname.  I forced the
         #   regex to match properly by stripping off the last character of
-        #   the hostname and used a non-space regex character instead.  Even
-        #   using \W+? is broken... I have to use \S+? to get the regex to
-        #   work.  Even a wildcard period (supposedly matches anything) instead
-        #   of \S doesn't work.
+        #   the hostname and used a negated special character class: [^\n]+?
         #######################################################################
-        cisco_unpriv_prompt_str = r"[\r\n]{0}\S+?{1}".format(
+        cisco_unpriv_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
             re.escape(self.prompt_hostname[:-1]), r">"
         )
-        linux_prompt_str = r"[\r\n]{0}[^{1}]+{1}\s*".format(
+        linux_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
             re.escape(self.prompt_hostname[:-1]), re.escape("$")
         )
-        cisco_priv_prompt_str = r"[\r\n]{0}\S+?{1}".format(
+        cisco_priv_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
             re.escape(self.prompt_hostname[:-1]), re.escape("#")
         )
 
@@ -1154,6 +1153,17 @@ class Shell(transitions.Machine):
             cisco_priv_prompt_str,
         ]
 
+        # Remove some prompt matches after successful login
+        if self.state in set({
+            "LOGIN_SUCCESS_UNPRIV",
+            "LOGIN_SUCCESS_PRIV",
+            "LOGIN_TIMEOUT",
+            "LOGIN_COMPLETE",
+            }):
+            for index in [0, 1, 2, 3]:
+                self.base_prompt_regex[index] = str(uuid.uuid4())
+
+
         if self.debug:
             # Expand all base_prompt_regex terms...
             rich_print(
@@ -1169,6 +1179,25 @@ class Shell(transitions.Machine):
 
         assert len(self.base_prompt_regex) == BASE_PROMPT_REGEX_LENGTH
         return self.base_prompt_regex
+
+    def change_linux_prompt(self):
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in change_linux_prompt()[/bold cyan]")
+        self.execute("precmd_functions=()")
+        self.execute("export PS1='linux>'")
+
+    def strip_text_colors(self, ascii_text=""):
+        """This function only works with string inputs, byte inputs fail"""
+        # https://stackoverflow.com/a/14693789/667301...
+        assert not isinstance(ascii_text, bytes)
+        assert isinstance(ascii_text, str)
+        ansi_escape_8bit = re.compile(
+            br"(?:\x1B[@-Z\\-_]|[\x80-\x9A\x9C-\x9F]|(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~])"
+        )
+        result = ansi_escape_8bit.sub(b"", bytes(ascii_text, self.encoding))
+        return result.decode(self.encoding)
+
 
     def after_SELECT_TCP_PROTOCOL_cb(self):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
@@ -1676,14 +1705,6 @@ class Shell(transitions.Machine):
                     self.state
                 )
             )
-
-        # OLD FIXME
-        # if self.debug:
-        #    rich_print("   [bold blue]after_LOGIN_SUCCESS_UNPRIV_cb() - csendline("") <- blank line[/bold blue]}")
-        # self.csendline('')
-
-        # index = self.cexpect(self.base_prompt_regex,
-        #    timeout=self.command_timeout)
 
         if self.debug:
             rich_print(
