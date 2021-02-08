@@ -1,5 +1,6 @@
 from contextlib import closing
 from io import StringIO
+import unicodedata
 import platform
 import socket
 import uuid
@@ -763,10 +764,11 @@ class Shell(transitions.Machine):
 
     @property
     def response(self):
-        if self.strip_colors:
-            return self.strip_text_colors(self.child.before)
+        before = self.child.before
+        if self.strip_text_colors:
+            return self.strip_text_colors(before)
         else:
-            return self.child.before
+            return before
 
     def exit(self):
         self.child.close()
@@ -1066,8 +1068,30 @@ class Shell(transitions.Machine):
                     )
                 )
 
+        before_retval = list()
         before = self.child.before
+        if self.strip_colors:
+            for line in self.strip_text_colors(before).splitlines():
+                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                before_retval.append(no_cntl_char_line)
+        else:
+            for line in before.splitlines():
+                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                before_retval.append(no_cntl_char_line)
+        before_stripped = "\r\n".join(before_retval)
+
+        after_retval = list()
         after = self.child.after
+        if self.strip_colors:
+            for line in self.strip_text_colors(after).splitlines():
+                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                after_retval.append(no_cntl_char_line)
+        else:
+            for line in after.splitlines():
+                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                after_retval += no_cntl_char_line
+        after_stripped = "\r\n".join(after_retval)
+
         if self.debug:
             rich_print("")
             rich_print(
@@ -1075,36 +1099,33 @@ class Shell(transitions.Machine):
                     loop_counter, index
                 )
             )
-            rich_print(
-                    "\n    [bold blue]detect_prompt() found this in self.child.before: '{}'[/bold blue]".format(before))
-            rich_print(
-                    "\n    [bold blue]detect_prompt() found this in self.child.after: '{}'[/bold blue]".format(self.response))
-
 
         ## Example of prompt detection on route-views.oregon-ix.org...
         # hostname = self.child.before.strip()  # detect hostname    = route-views
-        assert isinstance(self.response, str)
+        assert isinstance(after, str)
         if self.debug:
             rich_print("")
-            rich_print("        [bold blue]detect_prompt() saw this after sending an empty command: '{}'".format(self.response))
+            rich_print("        [bold blue]detect_prompt() sent an empty command and saw this in self.child.after: '{}'".format(after_stripped))
 
         assert len(after.splitlines()) > 0
 
-        if self.debug:
-            rich_print("    [bold blue]detect_prompt() is seeking the prompt in this output '{}'".format(self.response))
-            rich_print(
-                "    [bold blue]detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
-                    self.prompt_hostname
-                )
-            )
-
         # Set the hostname
-        for line in self.response.splitlines():
+        for line in after_retval:
             if line.strip()=="":
                 continue
             else:
                 self.prompt_hostname = line.strip()[:-1]
                 break
+
+        assert self.prompt_hostname != ""
+
+        if self.debug:
+            rich_print("    [bold blue]detect_prompt() is searched for the prompt in this output '{}'".format(after_stripped))
+            rich_print(
+                "    [bold blue]detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
+                    self.prompt_hostname
+                )
+            )
 
         assert self.prompt_hostname != ""
 
