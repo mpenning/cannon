@@ -1115,11 +1115,11 @@ class Shell(transitions.Machine):
 
         assert len(after.splitlines()) > 0
         # Set the hostname
-        self.prompt_hostname = after.splitlines()[-1].strip()[0:-1]
+        self.prompt_hostname = after.splitlines()[-1].strip()[:-1]
         if self.debug:
-            rich_print("")
+            rich_print("    [bold blue]detect_prompt() is seeking the prompt in this output '{}'".format(after))
             rich_print(
-                "[bold blue]    detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
+                "    [bold blue]detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
                     self.prompt_hostname
                 )
             )
