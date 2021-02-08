@@ -1078,51 +1078,33 @@ class Shell(transitions.Machine):
             rich_print(
                     "\n    [bold blue]detect_prompt() found this in self.child.before: '{}'[/bold blue]".format(before))
             rich_print(
-                    "\n    [bold blue]detect_prompt() found this in self.child.after: '{}'[/bold blue]".format(after))
+                    "\n    [bold blue]detect_prompt() found this in self.child.after: '{}'[/bold blue]".format(self.response))
 
-        # FIXME - I might be able to delete all this...
-        if False:
-            # WARNING: use self.child.sendline(); do not use self.csendline() here
-            self.child.sendline("")
-
-            ### Start building prompt_str and base_prompt_regex
-            # Use a very short timeout here
-            # WARNING self.child.expect() is required; do not use self.cexpect()
-            try:
-                index = self.child.expect(self.base_prompt_regex, timeout=1)
-                assert index >= 4  # Ensure we are at an unpriv or priv prompt
-
-            except px.exceptions.TIMEOUT:
-                assert self.child.isalive()
-                if self.debug:
-                    rich_print(
-                        "[bold blue]    detect_prompt() pre-login finished.  Hit TIMEOUT condition[/bold blue]"
-                    )
-
-            except px.exceptions.EOF:
-                assert self.child.isalive()
-                if self.debug:
-                    rich_print(
-                        "[bold blue]    detect_prompt() pre-login finished.  Hit EOF condition[/bold blue]"
-                    )
 
         ## Example of prompt detection on route-views.oregon-ix.org...
         # hostname = self.child.before.strip()  # detect hostname    = route-views
-        assert isinstance(after, str)
+        assert isinstance(self.response, str)
         if self.debug:
             rich_print("")
-            rich_print("        [bold blue]detect_prompt() saw this after sending an empty command: '{}'".format(after))
+            rich_print("        [bold blue]detect_prompt() saw this after sending an empty command: '{}'".format(self.response))
 
         assert len(after.splitlines()) > 0
-        # Set the hostname
-        self.prompt_hostname = after.splitlines()[-1].strip()[:-1]
+
         if self.debug:
-            rich_print("    [bold blue]detect_prompt() is seeking the prompt in this output '{}'".format(after))
+            rich_print("    [bold blue]detect_prompt() is seeking the prompt in this output '{}'".format(self.response))
             rich_print(
                 "    [bold blue]detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
                     self.prompt_hostname
                 )
             )
+
+        # Set the hostname
+        for line in self.response.splitlines():
+            if line.strip()=="":
+                continue
+            else:
+                self.prompt_hostname = line.strip()[:-1]
+                break
 
         assert self.prompt_hostname != ""
 
