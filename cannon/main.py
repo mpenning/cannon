@@ -180,7 +180,6 @@ class Shell(transitions.Machine):
         self.strip_colors = strip_colors
 
         self.prompt_hostname = ""
-        self.prompt_str = ""  # This gets set in self.sync_prompt()
         # Detect a typical linux CLI prompt...
         # Build the template before detecting prompt
         self.base_prompt_regex = self.build_base_prompt_regex()
@@ -808,12 +807,12 @@ class Shell(transitions.Machine):
         if (self.prompt_hostname == "") and (require_detect_prompt is True):
             if self.debug:
                 rich_print(
-                    "[bold blue]detect_prompt() has not assigned a prompt character to self.prompt_str[/bold blue]".format(
-                        self.prompt_str
+                    "[bold blue]detect_prompt() has not assigned a hostname to self.prompt_hostname[/bold blue]".format(
+                        self.prompt_hostname
                     )
                 )
                 rich_print(
-                    "[bold red]self.prompt_str='{}'.[/bold red]".format(self.prompt_str)
+                    "[bold red]self.prompt_hostname='{}'.[/bold red]".format(self.prompt_hostname)
                 )
             raise PromptDetectionError(
                 "Please call detect_prompt() before sync_prompt()"
@@ -1067,6 +1066,8 @@ class Shell(transitions.Machine):
                     )
                 )
 
+        before = self.child.before
+        after = self.child.after
         if self.debug:
             rich_print("")
             rich_print(
@@ -1074,39 +1075,47 @@ class Shell(transitions.Machine):
                     loop_counter, index
                 )
             )
+            rich_print(
+                    "\n    [bold blue]detect_prompt() found this in self.child.before: '{}'[/bold blue]".format(before))
+            rich_print(
+                    "\n    [bold blue]detect_prompt() found this in self.child.after: '{}'[/bold blue]".format(after))
 
-        # WARNING: use self.child.sendline(); do not use self.csendline() here
-        self.child.sendline("")
+        # FIXME - I might be able to delete all this...
+        if False:
+            # WARNING: use self.child.sendline(); do not use self.csendline() here
+            self.child.sendline("")
 
-        ### Start building prompt_str and base_prompt_regex
-        # Use a very short timeout here
-        # WARNING self.child.expect() is required; do not use self.cexpect()
-        try:
-            index = self.child.expect(self.base_prompt_regex, timeout=1)
-            assert index >= 4  # Ensure we are at an unpriv or priv prompt
+            ### Start building prompt_str and base_prompt_regex
+            # Use a very short timeout here
+            # WARNING self.child.expect() is required; do not use self.cexpect()
+            try:
+                index = self.child.expect(self.base_prompt_regex, timeout=1)
+                assert index >= 4  # Ensure we are at an unpriv or priv prompt
 
-        except px.exceptions.TIMEOUT:
-            assert self.child.isalive()
-            if self.debug:
-                rich_print(
-                    "[bold blue]    detect_prompt() pre-login finished.  Hit TIMEOUT condition[/bold blue]"
-                )
+            except px.exceptions.TIMEOUT:
+                assert self.child.isalive()
+                if self.debug:
+                    rich_print(
+                        "[bold blue]    detect_prompt() pre-login finished.  Hit TIMEOUT condition[/bold blue]"
+                    )
 
-        except px.exceptions.EOF:
-            assert self.child.isalive()
-            if self.debug:
-                rich_print(
-                    "[bold blue]    detect_prompt() pre-login finished.  Hit EOF condition[/bold blue]"
-                )
+            except px.exceptions.EOF:
+                assert self.child.isalive()
+                if self.debug:
+                    rich_print(
+                        "[bold blue]    detect_prompt() pre-login finished.  Hit EOF condition[/bold blue]"
+                    )
 
         ## Example of prompt detection on route-views.oregon-ix.org...
         # hostname = self.child.before.strip()  # detect hostname    = route-views
-        assert isinstance(self.child.after, str)
-        hostname = self.child.after.strip()
+        assert isinstance(after, str)
+        if self.debug:
+            rich_print("")
+            rich_print("        [bold blue]detect_prompt() saw this after sending an empty command: '{}'".format(after))
 
-        assert len(hostname.splitlines()) > 0
+        assert len(after.splitlines()) > 0
         # Set the hostname
-        self.prompt_hostname = hostname.splitlines()[-1].strip()[0:-1]
+        self.prompt_hostname = after.splitlines()[-1].strip()[0:-1]
         if self.debug:
             rich_print("")
             rich_print(
@@ -1115,12 +1124,11 @@ class Shell(transitions.Machine):
                 )
             )
 
-        # Find the last non-whitespace character and use it as the prompt
-        self.prompt_str = hostname.splitlines()[-1].strip()[-1]
+        assert self.prompt_hostname != ""
 
         self.build_base_prompt_regex()  # Adjust the prompt regex after detection
 
-        return self.prompt_str
+        return self.prompt_hostname
 
     def build_base_prompt_regex(self):
         """Assign self.base_prompt_regex with the latest prompt info"""
@@ -1164,6 +1172,7 @@ class Shell(transitions.Machine):
             "LOGIN_TIMEOUT",
             "LOGIN_COMPLETE",
             }):
+
             for index in [0, 1, 2, 3]:
                 self.base_prompt_regex[index] = str(uuid.uuid4())
 
