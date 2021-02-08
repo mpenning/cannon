@@ -14,9 +14,27 @@ from rich import print as rich_print
 from textfsm import TextFSM
 import pexpect as px
 import transitions
-import snoop
+#import snoop
 
-"""Can't trigger event _go_LOGIN_SUCCESS_UNPRIV from state SEND_LOGIN_PASSWORD!"""
+r""" cannon - Python ssh automation using a single driver
+     Copyright (C) 2020-2021 David Michael Pennington
+
+     This program is free software: you can redistribute it and/or modify
+     it under the terms of the GNU General Public License as published by
+     the Free Software Foundation, either version 3 of the License, or
+     (at your option) any later version.
+
+     This program is distributed in the hope that it will be useful,
+     but WITHOUT ANY WARRANTY; without even the implied warranty of
+     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+     GNU General Public License for more details.
+
+     You should have received a copy of the GNU General Public License
+     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+     If you need to contact the author, you can do so by emailing:
+     mike [~at~] pennington [/dot\] net
+"""
 
 
 class UnexpectedPrompt(Exception):
