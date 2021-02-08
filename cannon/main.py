@@ -442,6 +442,7 @@ class Shell(transitions.Machine):
         cmd=None,
         template=None,
         prompts=(),
+        timeout=0.0,
         command_timeout=0.0,
         carriage_return=True,
     ):
@@ -450,7 +451,7 @@ class Shell(transitions.Machine):
             - `cmd` is the command to execute
             - `template` is a string with the text of the TextFSM template
             - `prompts` is a tuple of prompt regexs to apply to the output of the command
-            - `command_timeout` is how long we should wait for the command prompt to return
+            - `timeout` is how long we should wait for the command prompt to return
             - `carriage_return` indicates whether the command should be followed with a carriage-return.  The values are either True or False (default is True, meaning the CR will be sent after the command).
 
         execute() returns a list of dicts if `template` is specified; otherwise
@@ -467,10 +468,13 @@ class Shell(transitions.Machine):
                 )
             )
 
-        if command_timeout == 0.0:
-            command_timeout = self.command_timeout
+        if timeout==0.0 and command_timeout > 0.0:
+            timeout = command_timeout
 
-        arg_list = ("cmd", "template", "prompts", "command_timeout", "carriage_return")
+        elif timeout==0.0 and command_timeout == 0.0:
+            timeout = self.command_timeout
+
+        arg_list = ("cmd", "template", "prompts", "timeout", "command_timeout", "carriage_return")
         arg = list()
         if self.debug:
             # build the debugging string...
@@ -483,8 +487,8 @@ class Shell(transitions.Machine):
                     arg.append("template=None")
                 elif ii == "prompts":
                     arg.append("prompts={}".format(prompts))
-                elif ii == "command_timeout":
-                    arg.append("command_timeout={}".format(command_timeout))
+                elif ii == "timeout":
+                    arg.append("timeout={}".format(timeout))
                 elif ii == "carriage_return":
                     arg.append("carriage_return={}".format(carriage_return))
             logstr = ", ".join(arg)
@@ -514,31 +518,13 @@ class Shell(transitions.Machine):
                 )
             )
 
-        index = self.cexpect(cli_prompts, timeout=command_timeout)
+        index = self.cexpect(cli_prompts, timeout=timeout)
 
         if self.debug:
             rich_print(
                 "    [bold blue]execute() received %s from cexpect()[/bold blue]"
                 % index
             )
-
-        # Handle sudo password prompt...
-        if False and index == 3:  # TODO remove False (and maybe all this under it)
-            if self.debug:
-                rich_print(
-                    "    [bold blue]Responding to password prompt:[/bold blue] [bold yellow]'{}'[/bold yellow]".format(
-                        self.matching_prompt
-                    )
-                )
-            assert self.password != "", "Hit a password prompt without a password"
-            self.csendline(self.password)
-            if self.debug:
-                rich_print(
-                    "    [bold blue]execute(cmd='{}') sent a password[/bold blue]".format(
-                        cmd
-                    )
-                )
-            index = self.cexpect(cli_prompts, timeout=command_timeout)
 
         ## If template is specified, parse the response into a list of dicts...
         if template is not None:
@@ -976,7 +962,7 @@ class Shell(transitions.Machine):
                         )
                     )
                     rich_print("        [bold blue]calling cexpect()[/bold blue]")
-                # index = self.child.expect(abbv_prompt_list, timeout=1)
+
                 index = self.child.expect(self.base_prompt_regex, timeout=1)
 
             except px.exceptions.TIMEOUT:
