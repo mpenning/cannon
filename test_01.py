@@ -3,9 +3,16 @@ from cannon import Shell, Account
 
 print("Logging into route-views")
 conn = Shell('route-views.oregon-ix.net', credentials=(Account('rviews', ''),),
-    auto_priv_mode=False, log_file='mylog.txt', log_screen=True, debug=False)
+    auto_priv_mode=False, log_file='', log_screen=True, debug=True)
 conn.execute('term len 0')
 #conn.sync_prompt(require_detect_prompt=False)
+conn.execute('show interface te0/0/0')
+conn.execute('show ip vrf')
+conn.execute('show ip bgp summ')
+conn.execute('show proc cpu sort')
+conn.execute('show inventory')
+conn.execute('show users')
+conn.execute('ping 4.2.2.2')
 conn.execute('show version')
 version = conn.response
 

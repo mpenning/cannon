@@ -15,7 +15,8 @@ from rich import print as rich_print
 from textfsm import TextFSM
 import pexpect as px
 import transitions
-#import snoop
+
+# import snoop
 
 r""" cannon - Python ssh automation using a single driver
      Copyright (C) 2020-2021 David Michael Pennington
@@ -52,6 +53,13 @@ class PromptDetectionError(Exception):
         super(PromptDetectionError, self).__init__(error)
 
 
+class InvalidLogFile(Exception):
+    """Exception for an invalid log file"""
+
+    def __init__(self, error=""):
+        super(InvalidLogFile, self).__init__(error)
+
+
 # DO NOT escape '$' here
 EXPECTED_LAST_PROMPT_CHARS = (":", ">", "#", "$")
 BASE_PROMPT_REGEX_LENGTH = 7
@@ -67,10 +75,13 @@ class TeeStdoutFile(object):
         self.stdout = sys.stdout
         self.encoding = encoding
 
-        # automatically remove empty log files
-        if os.path.isfile(self.log_file) and os.path.getsize(self.log_file) == 0:
-            print("FILE", self.log_file)
-            os.remove(self.log_file)
+        # automatically over-write empty log files
+        if os.path.isfile(self.log_file):
+            log_file_size = int(os.path.getsize(self.log_file))
+            if log_file_size == 0:
+                os.remove(self.log_file)
+            else:
+                raise InvalidLogFile("FATAL: can not overwrite %s" % self.log_file)
 
         self.fh = open(self.log_file, self.filemode, encoding=self.encoding)
 
@@ -384,6 +395,7 @@ class Shell(transitions.Machine):
 
     def build_connect_cmd(self):
         if self.debug:
+            rich_print("")
             rich_print("    [bold cyan]in build_connect_cmd()[/bold cyan]")
             rich_print(
                 "    [bold blue]build_connect_cmd() is configuring ssh parameters for self.connect_cmd[/bold blue]"
@@ -461,20 +473,28 @@ class Shell(transitions.Machine):
         assert self.child.isalive()  # Don't issue commands against a dead conn
 
         if self.debug:
+            rich_print("")
             rich_print("    [bold cyan]in execute()[/bold cyan]")
             rich_print(
-                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                "        [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
                     self.state
                 )
             )
 
-        if timeout==0.0 and command_timeout > 0.0:
+        if timeout == 0.0 and command_timeout > 0.0:
             timeout = command_timeout
 
-        elif timeout==0.0 and command_timeout == 0.0:
+        elif timeout == 0.0 and command_timeout == 0.0:
             timeout = self.command_timeout
 
-        arg_list = ("cmd", "template", "prompts", "timeout", "command_timeout", "carriage_return")
+        arg_list = (
+            "cmd",
+            "template",
+            "prompts",
+            "timeout",
+            "command_timeout",
+            "carriage_return",
+        )
         arg = list()
         if self.debug:
             # build the debugging string...
@@ -493,19 +513,34 @@ class Shell(transitions.Machine):
                     arg.append("carriage_return={}".format(carriage_return))
             logstr = ", ".join(arg)
             rich_print(
-                "    [bold blue]execute([/bold blue][bold green]{}[/bold green][bold blue])[/bold blue]".format(
+                "        [bold blue]execute([/bold blue][bold green]{}[/bold green][bold blue])[/bold blue]".format(
                     logstr
                 )
             )
 
+        if self.debug:
+            rich_print(
+                "        [bold blue]execute() is running with cmd='{}'[/bold blue]".format(
+                    repr(cmd)
+                )
+            )
         if carriage_return:
-            self.csendline(cmd)
+            if self.debug:
+                rich_print(
+                    "        [bold blue] self.child.sendline('{}')[/bold blue]".format(
+                        cmd
+                    )
+                )
+            self.child.sendline(cmd)
         else:
+            if self.debug:
+                rich_print(
+                    "        [bold blue] self.child.send('{}')[/bold blue]".format(cmd)
+                )
             self.child.send(cmd)
 
         # Extend the list of cli_prompts if `prompts` was specified
-        self.build_base_prompt_regex()
-        cli_prompts = self.base_prompt_regex
+        cli_prompts = self.build_base_prompt_regex()
         if prompts != ():
             assert isinstance(prompts, tuple)
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
@@ -513,7 +548,7 @@ class Shell(transitions.Machine):
         # Look for prompt matches after executing the command
         if self.debug:
             rich_print(
-                "    [bold blue]execute(cmd='{}') calling cexpect()[/bold blue]".format(
+                "        [bold blue]execute() is calling cexpect()[/bold blue]".format(
                     cmd
                 )
             )
@@ -522,8 +557,8 @@ class Shell(transitions.Machine):
 
         if self.debug:
             rich_print(
-                "    [bold blue]execute() received %s from cexpect()[/bold blue]"
-                % index
+                "        [bold blue]execute() matched index %s: %s in cexpect()[/bold blue]"
+                % (index, cli_prompts[index])
             )
 
         ## If template is specified, parse the response into a list of dicts...
@@ -562,23 +597,30 @@ class Shell(transitions.Machine):
                 if len(retval) > 0:
                     return retval
         else:
-            return None
+            return index
 
     def csendline(self, text):
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in csendline()[/bold cyan]")
         assert self.child.isalive()
         if self.debug:
             rich_print("")
             rich_print(
-                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                "            [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
                     self.state
                 )
             )
             rich_print(
-                "        [bold blue]csendline([/bold blue][bold yellow]'{}'[/bold yellow][bold blue])[/bold blue]".format(
+                "            [bold blue]csendline([/bold blue][bold yellow]'{}'[/bold yellow][bold blue])[/bold blue]".format(
                     text
                 )
             )
 
+        if self.debug:
+            rich_print(
+                "            [bold blue]csendline() calling self.child.sendline()[/bold blue]'"
+            )
         # WARNING: use self.child.sendline(); do not use self.csendline() here
         self.child.sendline(text)
 
@@ -587,12 +629,12 @@ class Shell(transitions.Machine):
             rich_print("")
             rich_print("    [bold cyan]in cexpect()[/bold cyan]")
             rich_print(
-                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                "        [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
                     self.state
                 )
             )
             rich_print(
-                "    [bold blue]cexpect([/bold blue][bold green]pattern_list, timeout={}[/bold green][bold blue]) called[/bold blue]".format(
+                "        [bold blue]cexpect([/bold blue][bold green]pattern_list, timeout={}[/bold green][bold blue]) was called[/bold blue]".format(
                     timeout
                 )
             )
@@ -612,7 +654,9 @@ class Shell(transitions.Machine):
         try:
             if self.debug:
                 rich_print(
-                    "    [bold blue]cexpect() calling self.child.expect()[/bold blue]"
+                    "        [bold blue]cexpect() calling self.child.expect(pattern_list, timeout={})[/bold blue]".format(
+                        timeout
+                    )
                 )
             match_index = self.child.expect(pattern_list, timeout=timeout)
             self.matching_prompt_regex_index = match_index
@@ -638,7 +682,9 @@ class Shell(transitions.Machine):
                     )
                 )
                 rich_print("")
-                rich_print("    [bold blue]debugs from str(self.child):[/bold blue]")
+                rich_print(
+                    "    [bold blue]cexpect() debugs from str(self.child):[/bold blue]"
+                )
                 for line in str(self.child).splitlines():
                     rich_print("        [bold yellow]{0}[/bold yellow]".format(line))
 
@@ -647,29 +693,64 @@ class Shell(transitions.Machine):
                 rich_print(
                     "        [bold red]cexpect() EOF exception while waiting for pattern_list[/bold red]"
                 )
-            match_index = -1
+            match_index = None
 
         except px.exceptions.TIMEOUT:
             if self.debug:
                 rich_print(
                     "        [bold red]cexpect() TIMEOUT exception while waiting for pattern_list[/bold red]"
                 )
-            match_index = -1
+            match_index = None
 
-        if self.debug:
-            rich_print("")
-            rich_print(
-                "        [bold blue]cexpect() returning '{}' to the calling function[/bold blue]".format(
-                    match_index
+        if (match_index is not None) and match_index >= 0:
+            try:
+                if self.debug:
+                    rich_print(
+                        "        [bold blue]cexpect() len(pattern_list[match_index])={}".format(
+                            len(pattern_list[match_index])
+                        )
+                    )
+                assert not ("UUID~" in pattern_list[match_index][0:6])
+
+            except AssertionError as ee:
+                rich_print(
+                    "[bold red]cexpect() matched prompt index {}: {}.  {}[/bold red]".format(
+                        match_index, pattern_list[match_index], str(ee)
+                    )
                 )
-            )
-        return match_index
+
+            return match_index
+
+        else:
+            # match_index hit an error... try again...
+            self.child.sendline("")
+            match_index = self.child.expect(pattern_list, timeout=timeout)
+
+            assert match_index >= 0
+            # match_index < 0
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "        [bold blue]cexpect() detected a prompt and is returning '{}' to the calling function[/bold blue]".format(
+                        match_index
+                    )
+                )
+            return match_index
 
     def interact(self):
         self._go_INTERACT()
 
     def modify_ssh_parameters(self):
         """This method should be called after calling self.cexpect() during ssh spawn.  It returns True or False"""
+
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in modify_ssh_parameters()[/bold cyan]")
+            rich_print(
+                "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
+                    self.state
+                )
+            )
 
         #  no matching ssh cipher found. Their offer:
         mm = re.search(r"no\s+matching\s+cipher.+?offer:\s+(\S.+)$", self.child.after)
@@ -678,11 +759,16 @@ class Shell(transitions.Machine):
             self.ciphers = candidate_cipher_list
             if self.debug:
                 rich_print(
-                    "    [bold blue]matching_prompt set self.ciphers: '{}'[/bold blue]".format(
+                    "    [bold blue]modify_ssh_parameters() set self.ciphers: '{}'[/bold blue]".format(
                         self.ciphers
                     )
                 )
             # We didn't have a matching prompt character...
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]modify_ssh_parameters() returning True[/bold blue]"
+                )
             return True
 
         #  no matching key exchange method found. Their offer: diffie-hellman-group14-sha1
@@ -693,20 +779,33 @@ class Shell(transitions.Machine):
             self.key_exchanges = mm.group(1).strip()
             if self.debug:
                 rich_print(
-                    "valid [bold yellow]key_exchanges={}[/bold yellow]".format(
+                    "    [bold blue]modify_ssh_parameters() set self.key_exchanges.[/bold blue]"
+                )
+                rich_print(
+                    "        valid [bold yellow]key_exchanges={}[/bold yellow]".format(
                         self.key_exchanges
                     )
                 )
             # We didn't have a matching prompt character...
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]modify_ssh_parameters() returning True[/bold blue]"
+                )
             return True
 
+        if self.debug:
+            rich_print("")
+            rich_print(
+                "    [bold blue]modify_ssh_parameters() returning False[/bold blue]"
+            )
         return False
 
     @property
     def matching_prompt(self):
         """Get the matching prompt character; return the prompt character. Return None is session is not alive"""
         if self.debug:
-            rich_print("    [bold cyan]in matching_prompt property[/bold cyan]")
+            rich_print("    [bold cyan]in matching_prompt()[/bold cyan]")
 
         # After finds the string which matched...
         after = self.child.after
@@ -714,14 +813,18 @@ class Shell(transitions.Machine):
         self.matching_string = after
 
         if self.debug:
-            rich_print("    matching_prompt is parsing: '{}'".format(after))
+            rich_print(
+                "    [bold blue]matching_prompt() is parsing: '{}'[/bold blue]".format(
+                    after
+                )
+            )
 
         # Check for a valid CLI prompt character...
         candidate_prompt = None
         if self.child.isalive():
             if self.debug:
                 rich_print(
-                    "    [bold blue]matching_prompt is iterating over lines in after.splitlines()[/bold blue]"
+                    "    [bold blue]matching_prompt() is iterating over lines in after.splitlines()[/bold blue]"
                 )
 
             # Process ssh session output line by line...
@@ -752,13 +855,19 @@ class Shell(transitions.Machine):
             if candidate_prompt in EXPECTED_LAST_PROMPT_CHARS:
                 if self.debug:
                     rich_print(
-                        "    [bold blue]matching_prompt returning candidate_prompt='{}'[/bold blue]".format(
+                        "    [bold blue]matching_prompt() is returning candidate_prompt='{}'[/bold blue]".format(
                             candidate_prompt
                         )
                     )
                 return candidate_prompt
 
         else:
+            if self.debug:
+                rich_print(
+                    "    [bold blue]matching_prompt() is returning None='{}'[/bold blue]".format(
+                        line
+                    )
+                )
             candidate_prompt = None
             return candidate_prompt
 
@@ -771,19 +880,35 @@ class Shell(transitions.Machine):
             return before
 
     def exit(self):
+        if self.debug:
+            rich_print(
+                "    [bold blue]exit() is calling self.child.close()[/bold blue]".format(
+                    line
+                )
+            )
         self.child.close()
 
     def quit(self):
+        if self.debug:
+            rich_print(
+                "    [bold blue]quit() is calling self.exit()[/bold blue]".format(line)
+            )
         self.exit()
 
     def iter_protocols(self):
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in iter_protocols()[/bold cyan]")
         for proto_dict in self.protocols:
             yield proto_dict
 
     def iter_credentials(self):
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in iter_credentials()[/bold cyan]")
         for cred in self.credentials:
             if self.debug:
-                rich_print("    [bold blue]Select credentials:[/bold blue]")
+                rich_print("    [bold blue]iter_credentials() is yielding:[/bold blue]")
                 rich_print("        [bold yellow]{}[/bold yellow]".format(repr(cred)))
             yield cred
 
@@ -814,7 +939,9 @@ class Shell(transitions.Machine):
                     )
                 )
                 rich_print(
-                    "[bold red]self.prompt_hostname='{}'.[/bold red]".format(self.prompt_hostname)
+                    "[bold red]self.prompt_hostname='{}'.[/bold red]".format(
+                        self.prompt_hostname
+                    )
                 )
             raise PromptDetectionError(
                 "Please call detect_prompt() before sync_prompt()"
@@ -904,6 +1031,9 @@ class Shell(transitions.Machine):
                 raise NotImplementedError()
 
     def close(self):
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in close()[/bold cyan]")
         self.child.close()
         return (self.child.exitstatus, self.child.signalstatus)
 
@@ -919,8 +1049,8 @@ class Shell(transitions.Machine):
                 )
             )
 
-        if self.mode=="linux":
-            self.change_linux_prompt()
+        if self.mode == "linux":
+            self.change_linux_prompt(detect_prompt=False)
 
             # Catch up on missed prompts...
             finished = False
@@ -1072,11 +1202,17 @@ class Shell(transitions.Machine):
         before = self.child.before
         if self.strip_colors:
             for line in self.strip_text_colors(before).splitlines():
-                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                # https://stackoverflow.com/a/19016117/667301
+                no_cntl_char_line = "".join(
+                    ch for ch in line if unicodedata.category(ch)[0] != "C"
+                )
                 before_retval.append(no_cntl_char_line)
         else:
             for line in before.splitlines():
-                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                # https://stackoverflow.com/a/19016117/667301
+                no_cntl_char_line = "".join(
+                    ch for ch in line if unicodedata.category(ch)[0] != "C"
+                )
                 before_retval.append(no_cntl_char_line)
         before_stripped = "\r\n".join(before_retval)
 
@@ -1084,11 +1220,17 @@ class Shell(transitions.Machine):
         after = self.child.after
         if self.strip_colors:
             for line in self.strip_text_colors(after).splitlines():
-                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                # https://stackoverflow.com/a/19016117/667301
+                no_cntl_char_line = "".join(
+                    ch for ch in line if unicodedata.category(ch)[0] != "C"
+                )
                 after_retval.append(no_cntl_char_line)
         else:
             for line in after.splitlines():
-                no_cntl_char_line = "".join(ch for ch in line if unicodedata.category(ch)[0]!="C")
+                # https://stackoverflow.com/a/19016117/667301
+                no_cntl_char_line = "".join(
+                    ch for ch in line if unicodedata.category(ch)[0] != "C"
+                )
                 after_retval += no_cntl_char_line
         after_stripped = "\r\n".join(after_retval)
 
@@ -1105,13 +1247,17 @@ class Shell(transitions.Machine):
         assert isinstance(after, str)
         if self.debug:
             rich_print("")
-            rich_print("        [bold blue]detect_prompt() sent an empty command and saw this in self.child.after: '{}'".format(after_stripped))
+            rich_print(
+                "        [bold blue]detect_prompt() sent an empty command and saw this in self.child.after: '{}'".format(
+                    after_stripped
+                )
+            )
 
         assert len(after.splitlines()) > 0
 
         # Set the hostname
         for line in after_retval:
-            if line.strip()=="":
+            if line.strip() == "":
                 continue
             else:
                 self.prompt_hostname = line.strip()[:-1]
@@ -1120,9 +1266,13 @@ class Shell(transitions.Machine):
         assert self.prompt_hostname != ""
 
         if self.debug:
-            rich_print("    [bold blue]detect_prompt() is searched for the prompt in this output '{}'".format(after_stripped))
             rich_print(
-                "    [bold blue]detect_prompt() set prompt_hostname='{}'[/bold blue]".format(
+                "        [bold blue]detect_prompt() searched for the prompt in this output '{}'".format(
+                    after_stripped
+                )
+            )
+            rich_print(
+                "        [bold yellow]detect_prompt() set prompt_hostname='{}'[/bold yellow]".format(
                     self.prompt_hostname
                 )
             )
@@ -1135,6 +1285,10 @@ class Shell(transitions.Machine):
 
     def build_base_prompt_regex(self):
         """Assign self.base_prompt_regex with the latest prompt info"""
+
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in build_base_prompt_regex()[/bold cyan]")
 
         ####### WARNING #######################################################
         #   Getting this cisco unpriv prompt to work was extremely hard...
@@ -1169,16 +1323,17 @@ class Shell(transitions.Machine):
         ]
 
         # Remove some prompt matches after successful login
-        if self.state in set({
-            "LOGIN_SUCCESS_UNPRIV",
-            "LOGIN_SUCCESS_PRIV",
-            "LOGIN_TIMEOUT",
-            "LOGIN_COMPLETE",
-            }):
+        if self.state in set(
+            {
+                "LOGIN_SUCCESS_UNPRIV",
+                "LOGIN_SUCCESS_PRIV",
+                "LOGIN_TIMEOUT",
+                "LOGIN_COMPLETE",
+            }
+        ):
 
             for index in [0, 1, 2, 3]:
-                self.base_prompt_regex[index] = str(uuid.uuid4())
-
+                self.base_prompt_regex[index] = "UUID~" + str(uuid.uuid4())
 
         if self.debug:
             # Expand all base_prompt_regex terms...
@@ -1196,15 +1351,29 @@ class Shell(transitions.Machine):
         assert len(self.base_prompt_regex) == BASE_PROMPT_REGEX_LENGTH
         return self.base_prompt_regex
 
-    def change_linux_prompt(self):
+    def change_linux_prompt(self, detect_prompt=True):
         if self.debug:
             rich_print("")
             rich_print("    [bold cyan]in change_linux_prompt()[/bold cyan]")
-        self.execute("precmd_functions=()")
-        self.execute("export PS1='linux>'")
+
+        self.prompt_hostname = "linux"
+        self.base_prompt_regex = self.build_base_prompt_regex()
+        self.child.sendline("precmd_functions=()")
+        self.child.sendline("export PS1='{}>'".format(self.prompt_hostname))
+        if self.debug:
+            rich_print("")
+            rich_print(
+                "    [bold blue]change_linux_prompt() is running detect_prompt()[/bold blue]"
+            )
+
+        if detect_prompt is True:
+            self.detect_prompt()
 
     def strip_text_colors(self, ascii_text=""):
         """This function only works with string inputs, byte inputs fail"""
+        if self.debug:
+            rich_print("")
+            rich_print("    [bold cyan]in strip_text_colors()[/bold cyan]")
         # https://stackoverflow.com/a/14693789/667301...
         assert not isinstance(ascii_text, bytes)
         assert isinstance(ascii_text, str)
@@ -1212,8 +1381,13 @@ class Shell(transitions.Machine):
             br"(?:\x1B[@-Z\\-_]|[\x80-\x9A\x9C-\x9F]|(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~])"
         )
         result = ansi_escape_8bit.sub(b"", bytes(ascii_text, self.encoding))
+        if self.debug:
+            rich_print(
+                "        [bold blue]strip_text_colors() returning {} characters[/bold blue]".format(
+                    len(result)
+                )
+            )
         return result.decode(self.encoding)
-
 
     def after_SELECT_TCP_PROTOCOL_cb(self):
         """Attempt to make a raw TCP connection to the protocol's TCP port"""
@@ -1389,7 +1563,7 @@ class Shell(transitions.Machine):
                     )
 
                 self.child = px.spawn(
-                    self.connect_cmd, timeout=self.login_timeout, encoding=self.encoding
+                    self.connect_cmd, timeout=self.login_timeout, encoding=self.encoding, echo=False
                 )
 
             except px.exceptions.EOF as ee:
@@ -1425,6 +1599,9 @@ class Shell(transitions.Machine):
                     "    [bold blue]after_CONNECT_cb() calling cexpect()[/bold blue]"
                 )
             index = self.cexpect(self.base_prompt_regex, timeout=self.login_timeout)
+
+            # Ensure we did not match a UUID prompt...
+            assert self.base_prompt_regex[index][0:6] != "UUID~"
 
             if self.debug:
                 rich_print(
