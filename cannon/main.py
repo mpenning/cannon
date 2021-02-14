@@ -590,7 +590,7 @@ class Shell(transitions.Machine):
 
         ## If template is specified, parse the response into a list of dicts...
         if template is not None:
-            if os.path.isfile(str(template)):
+            if os.path.isfile(os.path.expanduser(str(template))):
                 # open the textfsm template from disk...
                 fh = open(template, "r")
             else:
