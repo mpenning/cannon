@@ -18,7 +18,7 @@ Example Usage - Cisco IOS
             Account(user='rviews', passwd=''),
         ),
 
-        log_screen=False,
+        log_screen=True,
         log_file="~/mylog.txt",
         debug=False,
         )
