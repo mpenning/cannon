@@ -109,6 +109,13 @@ class TeeStdoutFile(object):
         self.fh.close()
 
 
+filter_buf = ''
+filter_buf_size = 256
+let_me_out = False
+bash_prompt = re.compile('linux>')
+
+
+
 class Account(object):
     def __init__(self, user, passwd="", priv_passwd="", ssh_key=""):
         self.user = user
@@ -393,6 +400,26 @@ class Shell(transitions.Machine):
         #######################################################################
         self._go_SELECT_TCP_PROTOCOL()
 
+    def interact_output_filter(self, s):
+        """Use this as an interact() output filter"""
+        global proc, bash_prompt, filter_buf, filter_buf_size, let_me_out
+
+        filter_buf += str(s)
+        filter_buf = filter_buf[-filter_buf_size:]
+
+        if "LET ME OUT" in filter_buf:
+            let_me_out = True
+
+        if bash_prompt.search(filter_buf):
+            if let_me_out:
+                self.child.sendline('exit')
+                self.child.expect(pexpect.EOF)
+                self.child.wait()
+            else:
+                self.child.sendline('python')
+
+        return str(s)
+
     def build_connect_cmd(self):
         if self.debug:
             rich_print("")
@@ -521,7 +548,7 @@ class Shell(transitions.Machine):
         if self.debug:
             rich_print(
                 "        [bold blue]execute() is running with cmd='{}'[/bold blue]".format(
-                    repr(cmd)
+                    cmd
                 )
             )
         if carriage_return:
@@ -619,7 +646,10 @@ class Shell(transitions.Machine):
 
         if self.debug:
             rich_print(
-                "            [bold blue]csendline() calling self.child.sendline()[/bold blue]'"
+                "            [bold blue]csendline() calling self.child.sendline()[/bold blue]"
+            )
+            rich_print(
+                "            [bold blue]exiting csendline()[/bold blue]"
             )
         # WARNING: use self.child.sendline(); do not use self.csendline() here
         self.child.sendline(text)
@@ -1042,7 +1072,7 @@ class Shell(transitions.Machine):
         # Detect the prompt as best-possible...
         if self.debug:
             rich_print("")
-            rich_print("    [bold cyan]in detect_prompt()[/bold cyan]")
+            rich_print("    [bold cyan]in detect_prompt(mode='{}')[/bold cyan]".format(self.mode))
             rich_print(
                 "    [bold blue]CURRENT STATE:[/bold blue] '[bold magenta]{}[/bold magenta]'".format(
                     self.state
@@ -1050,15 +1080,38 @@ class Shell(transitions.Machine):
             )
 
         if self.mode == "linux":
+            if self.debug:
+                rich_print(
+                    "    [bold blue]detect_prompt() is calling change_linux_prompt()[/bold blue]"
+                )
+            # do NOT set detect_prompt=True... that starts an infinite loop...
             self.change_linux_prompt(detect_prompt=False)
+
+            if self.debug:
+                rich_print(
+                    "    [bold blue]detect_prompt() starting a while loop to catch up with missed expect prompts[/bold blue]"
+                )
 
             # Catch up on missed prompts...
             finished = False
             while not finished:
                 try:
-                    self.child.expect(self.base_prompt_regex, timeout=1)
+                    # FIXME: we need to remove the hard-coded prompt
+                    #
+                    #     only expect the linux prompt is safe because
+                    #     we got self.mode=="linux"
+                    self.child.expect([r"linux>"], timeout=1)
                 except:
+                    rich_print(
+                        "        [bold blue]detect_prompt() timed out while expecting prompts with self.child.expect()[/bold blue]"
+                    )
                     finished = True
+
+            self.hostname = "linux"
+            self.build_base_prompt_regex()  # Adjust the prompt regex after detection
+            return self.prompt_hostname
+
+        assert self.mode!="linux"
 
         if self.debug:
             rich_print(
@@ -1069,7 +1122,8 @@ class Shell(transitions.Machine):
                     self.host
                 )
             )
-        self.csendline("")  # FIXME I might need to delete this...
+
+        self.csendline("")
 
         # Double check that this isn't a pre-login banner...
         loop_counter = 0
@@ -1092,15 +1146,19 @@ class Shell(transitions.Machine):
                             loop_counter
                         )
                     )
-                    rich_print("        [bold blue]calling cexpect()[/bold blue]")
+                    rich_print("        [bold blue]calling self.child.expect()[/bold blue]")
 
                 index = self.child.expect(self.base_prompt_regex, timeout=1)
 
             except px.exceptions.TIMEOUT:
                 assert self.child.isalive()
                 if self.debug:
+                    rich_print("")
                     rich_print(
-                        "[bold blue]        detect_prompt() pexpect.TIMEOUT[/bold blue]"
+                            "[bold blue]        detect_prompt() - self.child.expect() timed-out: pexpect.TIMEOUT[/bold blue]"
+                    )
+                    rich_print(
+                            "[bold blue]        detect_prompt() - index=-1.  Exiting while loop[/bold blue]"
                     )
                 index = -1
                 finished = True
@@ -1108,7 +1166,10 @@ class Shell(transitions.Machine):
             except px.exceptions.EOF:
                 if self.debug:
                     rich_print(
-                        "[bold blue]        detect_prompt() pexpect.EOF[/bold blue]"
+                            "[bold blue]        detect_prompt() - self.child.expect() found pexpect.EOF[/bold blue]"
+                    )
+                    rich_print(
+                            "[bold blue]        detect_prompt() - index=-1.  Exiting while loop[/bold blue]"
                     )
                 index = -1
                 finished = True
@@ -1201,6 +1262,9 @@ class Shell(transitions.Machine):
         before_retval = list()
         before = self.child.before
         if self.strip_colors:
+            before_retval = self.strip_control_chars(before).splitlines()
+
+            # FIXME - I think we can delete this...
             for line in self.strip_text_colors(before).splitlines():
                 # https://stackoverflow.com/a/19016117/667301
                 no_cntl_char_line = "".join(
@@ -1208,6 +1272,11 @@ class Shell(transitions.Machine):
                 )
                 before_retval.append(no_cntl_char_line)
         else:
+            # I think it's safe to remove these because self.strip_colors==False
+            #before = self.strip_control_chars(before)
+            #before_retval = self.strip_control_chars(before).splitlines()
+
+            # FIXME - I think we can delete this...
             for line in before.splitlines():
                 # https://stackoverflow.com/a/19016117/667301
                 no_cntl_char_line = "".join(
@@ -1218,7 +1287,19 @@ class Shell(transitions.Machine):
 
         after_retval = list()
         after = self.child.after
+        if self.debug:
+            rich_print("    [bold blue]detect_prompt() repr(after): {}".format(repr(after)))
+            rich_print("        [bold blue]writing output to variable: after_retval")
+
         if self.strip_colors:
+            if self.debug:
+                rich_print("        [bold blue]detect_prompt() is stripping colors in variable: after")
+                rich_print(
+                        "        [bold blue]detect_prompt() after values: '{}'[/bold blue]".format(
+                        after
+                    )
+                )
+
             for line in self.strip_text_colors(after).splitlines():
                 # https://stackoverflow.com/a/19016117/667301
                 no_cntl_char_line = "".join(
@@ -1226,6 +1307,8 @@ class Shell(transitions.Machine):
                 )
                 after_retval.append(no_cntl_char_line)
         else:
+            if self.debug:
+                rich_print("        [bold blue]detect_prompt() will not strip colors in variable: after")
             for line in after.splitlines():
                 # https://stackoverflow.com/a/19016117/667301
                 no_cntl_char_line = "".join(
@@ -1236,8 +1319,9 @@ class Shell(transitions.Machine):
 
         if self.debug:
             rich_print("")
+            rich_print("    [bold blue]detect_prompt(): len(after_stripped)={} lines[/bold blue]".format(len(after_stripped)))
             rich_print(
-                "\n    [bold blue]detect_prompt() finished the while loop after {} iterations. Detected prompt index={}[/bold blue]".format(
+                "\n    [bold blue]detect_prompt() finished the while loop took {} iterations.  Detected prompt index={}[/bold blue]".format(
                     loop_counter, index
                 )
             )
@@ -1349,6 +1433,8 @@ class Shell(transitions.Machine):
             rich_print("        [bold blue]{}[/bold blue]".format(str("]]")))
 
         assert len(self.base_prompt_regex) == BASE_PROMPT_REGEX_LENGTH
+        if self.debug:
+            rich_print("    [bold blue]exiting build_base_prompt_regex()[/bold blue]")
         return self.base_prompt_regex
 
     def change_linux_prompt(self, detect_prompt=True):
@@ -1358,22 +1444,43 @@ class Shell(transitions.Machine):
 
         self.prompt_hostname = "linux"
         self.base_prompt_regex = self.build_base_prompt_regex()
-        self.child.sendline("precmd_functions=()")
-        self.child.sendline("export PS1='{}>'".format(self.prompt_hostname))
         if self.debug:
-            rich_print("")
-            rich_print(
-                "    [bold blue]change_linux_prompt() is running detect_prompt()[/bold blue]"
-            )
+            rich_print("        [bold blue]change_linux_prompt() is running 'precmd_functions=()'[/bold blue]")
+        self.child.sendline("precmd_functions=()")
+        if self.debug:
+            rich_print("        [bold blue]change_linux_prompt() is running 'export PS1={}>'[/bold blue]".format(self.prompt_hostname))
+        self.child.sendline("export PS1='{}>'".format(self.prompt_hostname))
 
         if detect_prompt is True:
+            if self.debug:
+                rich_print("")
+                rich_print(
+                    "    [bold blue]change_linux_prompt() is running detect_prompt()[/bold blue]"
+                )
             self.detect_prompt()
+
+    def strip_control_chars(self, text_input=""):
+        if self.debug:
+            rich_print("    [bold cyan]in strip_control_chars(text_input='{}')[/bold cyan]".format(text_input))
+
+        retval = list()
+        for line in text_input.splitlines():
+            # https://stackoverflow.com/a/19016117/667301
+            no_cntl_char_line = "".join(
+                ch for ch in line if unicodedata.category(ch)[0] != "C"
+            )
+            retval.append(no_cntl_char_line)
+        return os.linesep.join(retval)
 
     def strip_text_colors(self, ascii_text=""):
         """This function only works with string inputs, byte inputs fail"""
+
         if self.debug:
-            rich_print("")
-            rich_print("    [bold cyan]in strip_text_colors()[/bold cyan]")
+            if isinstance(ascii_text, str) or isinstance(ascii_text, bytes):
+                sample = ascii_text[0:10]
+                rich_print("")
+                rich_print("    [bold cyan]in strip_text_colors(ascii_text='{}...')[/bold cyan]".format(sample))
+                rich_print("        [bold blue]ascii_text is type: {}[/bold blue]".format(type(ascii_text)))
         # https://stackoverflow.com/a/14693789/667301...
         assert not isinstance(ascii_text, bytes)
         assert isinstance(ascii_text, str)
@@ -1562,6 +1669,7 @@ class Shell(transitions.Machine):
                         )
                     )
 
+                # spawnu Ref: https://stackoverflow.com/a/37654748/667301
                 self.child = px.spawn(
                     self.connect_cmd, timeout=self.login_timeout, encoding=self.encoding, echo=False
                 )
@@ -1590,6 +1698,7 @@ class Shell(transitions.Machine):
 
             # log to both screen and file if requested
             elif (self.log_screen is True) and self.log_file != "":
+                #self.child.logfile = TeeStdoutFile(
                 self.child.logfile = TeeStdoutFile(
                     log_file=self.log_file, log_screen=self.log_screen
                 )
@@ -2050,8 +2159,10 @@ class Shell(transitions.Machine):
         rich_print(
             "[bold magenta]Enter INTERACT mode; use Cntl-] to escape[/bold magenta]"
         )
+
+        # FIXME - build a proper output_filter
         self.child.interact(
-            escape_character=chr(4), input_filter=None, output_filter=interact_filter
+            escape_character=chr(4), input_filter=None, output_filter=self.interact_output_filter
         )
 
 
