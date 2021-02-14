@@ -66,8 +66,10 @@ Example Usage - Linux
     conn.execute('sudo ls /tmp')
     conn.execute('ls')
 
+    # FIXME, interact() is broken...
+    #conn.interact()
+
     conn.execute('whoami', command_timeout=5)
-    conn.interact()   # FIXME, I can't find a way to make interact() stop crashing
     print("WHOAMI RESULT QUOTED '{}'".format(conn.response))
     conn.execute('uptime', command_timeout=5)
     print("UPTIME '{}'".format(conn.response))

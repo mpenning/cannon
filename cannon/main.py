@@ -108,13 +108,12 @@ class TeeStdoutFile(object):
     def close(self):
         self.fh.close()
 
-
+# Globals used by child.interact()...
+#     https://stackoverflow.com/a/43383182/667301
 filter_buf = ''
 filter_buf_size = 256
 let_me_out = False
 bash_prompt = re.compile('linux>')
-
-
 
 class Account(object):
     def __init__(self, user, passwd="", priv_passwd="", ssh_key=""):
