@@ -483,11 +483,12 @@ class Shell(transitions.Machine):
         timeout=0.0,
         command_timeout=0.0,
         carriage_return=True,
+        relax_prompt=False,
     ):
         """Run a command and optionally parse with a TextFSM template
 
             - `cmd` is the command to execute
-            - `template` is a string with the text of the TextFSM template
+            - `template` is a string with the text of a TextFSM template
             - `prompts` is a tuple of prompt regexs to apply to the output of the command
             - `timeout` is how long we should wait for the command prompt to return
             - `carriage_return` indicates whether the command should be followed with a carriage-return.  The values are either True or False (default is True, meaning the CR will be sent after the command).
@@ -566,7 +567,7 @@ class Shell(transitions.Machine):
             self.child.send(cmd)
 
         # Extend the list of cli_prompts if `prompts` was specified
-        cli_prompts = self.build_base_prompt_regex()
+        cli_prompts = self.build_base_prompt_regex(relax_prompt=relax_prompt)
         if prompts != ():
             assert isinstance(prompts, tuple)
             cli_prompts.extend(prompts)  # Add command-specific prompts here...
@@ -1366,7 +1367,7 @@ class Shell(transitions.Machine):
 
         return self.prompt_hostname
 
-    def build_base_prompt_regex(self):
+    def build_base_prompt_regex(self, relax_prompt=False):
         """Assign self.base_prompt_regex with the latest prompt info"""
 
         if self.debug:
@@ -1380,15 +1381,27 @@ class Shell(transitions.Machine):
         #   regex to match properly by stripping off the last character of
         #   the hostname and used a negated special character class: [^\n]+?
         #######################################################################
-        cisco_unpriv_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
-            re.escape(self.prompt_hostname[:-1]), r">"
-        )
-        linux_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
-            re.escape(self.prompt_hostname[:-1]), re.escape("$")
-        )
-        cisco_priv_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
-            re.escape(self.prompt_hostname[:-1]), re.escape("#")
-        )
+        if relax_prompt is False:
+            cisco_unpriv_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
+                re.escape(self.prompt_hostname[:-1]), r">"
+            )
+            linux_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
+                re.escape(self.prompt_hostname[:-1]), re.escape("$")
+            )
+            cisco_priv_prompt_str = r"[\r\n]+{0}[^\n]+?{1}".format(
+                re.escape(self.prompt_hostname[:-1]), re.escape("#")
+            )
+
+        else:
+            cisco_unpriv_prompt_str = r"[\r\n]+[^\n]+?{0}".format(
+                r">"
+            )
+            linux_prompt_str = r"[\r\n]+[^\n]+?{0}".format(
+                re.escape("$")
+            )
+            cisco_priv_prompt_str = r"[\r\n]+[^\n]+?{0}".format(
+                re.escape("#")
+            )
 
         self.base_prompt_regex = [
             # Unable to negotiate with 172.16.1.3 port 22: no matching cipher found. Their offer: aes128-cbc,3des-cbc,aes192-cbc,aes256-cbc
