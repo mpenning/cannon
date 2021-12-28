@@ -1,7 +1,7 @@
 Introduction
 ============
 
-cannon is a wrapper around pexpect_ to connect with remote server or network 
+cannon is a wrapper around exscript_ to connect with remote server or network 
 devices with ssh.
 
 Example Usage - Cisco IOS
@@ -12,7 +12,7 @@ Example Usage - Cisco IOS
     from cannon import Shell, Account
 
     sess = Shell(
-        host='route-views.oregon-ix.net',
+        host='route-views.routeviews.org',
         # route-views doesn't need password
         credentials=(
             Account(user='rviews', passwd=''),
@@ -53,7 +53,8 @@ Example Usage - Linux
 
     print("Test logging into linux with ssh...")
     # Test password fallback and ssh_key authorization...
-    acct01 = Account(getuser(), passwd, ssh_key='~/.ssh/id_rsa')
+    username = getuser()
+    acct01 = Account(username, getpass("Password for %s" % username), ssh_key='~/.ssh/id_rsa')
 
     conn = Shell('localhost', credentials=(acct01,),
         mode="linux", debug=False, log_screen=True,
@@ -80,4 +81,4 @@ Example Usage - Linux
     conn.close()
 
 
-.. _pexpect: https://pypi.python.org/pypi/pexpect
+.. _exscript: https://pypi.python.org/pypi/exscript

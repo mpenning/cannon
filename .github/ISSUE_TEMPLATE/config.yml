@@ -1,0 +1,19 @@
+---
+# Documentation reference
+#     https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/manually-creating-a-single-issue-template-for-your-repository
+#
+# The titles of markdown (*.md) files in `.github/ISSUE_TEMPLATE/*.md`
+# determine what buttons are shown when opening a github issue...
+#
+# yaml formatting checked with http://www.yamllint.com/
+#
+blank_issues_enabled: false
+contact_links: 
+  - 
+    about: "Do not report security issues publicly. Email our security contact."
+    name: "Security issue"
+    url: penningtonthing@gmail.com
+  - 
+    about: "Search for and ask questions about your code on Stack Overflow."
+    name: Questions
+    url: "https://stackoverflow.com/questions/"
