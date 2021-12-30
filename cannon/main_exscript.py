@@ -168,6 +168,9 @@ class Shell(HasRequiredTraits):
         assert isinstance(cmd, str)
         self.conn.expect(cmd)
 
+    def close(self, force=False, timeout=0, debug=0, consume=True):
+        self.conn.close(force=force)
+
     @property
     def response(self):
         return self.conn.response
@@ -302,14 +305,3 @@ def main():
     conn.send("exit\r")
     conn.close()
 
-
-def vain():
-    conn = Shell(host="localhost", driver="shell", debug=1)
-    conn.execute(cmd="ls -la", prompt_list=())
-    for line in conn.response.splitlines():
-        print("LINE", line)
-    conn.interact()
-
-
-# main()
-vain()
