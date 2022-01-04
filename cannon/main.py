@@ -45,7 +45,7 @@ from textfsm import TextFSM
 from loguru import logger
 
 """
-Copyright 2021 - David Michael Pennington
+Copyright 2022 - David Michael Pennington
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
@@ -94,30 +94,24 @@ DEFAULT_LOGIN_TIMEOUT = 0
 DEFAULT_PROMPT_LIST = []
 DEFAULT_PROMPT_TIMEOUT = 30
 
+@logger.catch(onerror=lambda _: sys.exit(1))
+def account_factory(username="", password=None, private_key=""):
+    assert username != ""
 
-def cast_unicode(line, encoding="utf-8"):
-    assert (
-        isinstance(line, int)
-        or isinstance(line, bytes)
-        or isinstance(line, str)
-        or isinstance(line, float)
-    )
-    try:
-        line = f"{line}"
-    except:
-        # line = str(bytes(line, encoding='utf-8'), encoding='utf-8')
-        if isinstance(line, bytes):
-            line = line.decode("utf-8")
-        line = str(line, encoding="utf-8")
-    return line
+    if password is None:
+        password = getpass("Login password for %s" % username)
+
+    if isinstance(private_key, str) and private_key!="":
+        private_key_path = os.path.expanduser(private_key)
+        private_key_obj = PrivateKey(keytype='rsa').from_file(self.private_key_path)
 
 
-@logger.catch
+@logger.catch(onerror=lambda _: sys.exit(1))
 class Shell(HasRequiredTraits):
     host = Str(value="", required=True)
     port = Range(value=22, low=1, high=65524)
     username = Str(value=getuser(), required=False)
-    password = Str(required=False)
+    password = Str(value='', required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
@@ -134,6 +128,7 @@ class Shell(HasRequiredTraits):
     prompt_timeout = Range(value=10, low=1, high=65535, required=False)
     prompt_list = List(Str, required=False)
     default_prompt_list = List(re.Pattern, required=False)
+    account = Any(value=None, required=True)
     account_list = List(Exscript.account.Account, required=False)
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
     conn = Any(required=False)
@@ -144,21 +139,22 @@ class Shell(HasRequiredTraits):
 
         assert self.host != ""
         assert len(self.account_list) == 0
-        self.append_account()
+        if isinstance(self.account, Account):
+            self.append_account(self.account)
+        else:
+            raise ValueError("Account must be included in the Shell() call")
 
-        #self.conn = SSH2(
-        #    driver=self.driver,
-        #    stdout=self.stdout,
-        #    stderr=self.stderr,
-        #    termtype=self.termtype,
-        #    banner_timeout=self.banner_timeout,
-        #    encoding=self.encoding,
-        #    debug=self.debug,
-        #)
+        # Ensure this was NOT called with username
+        if kwargs.get("username", False) is not False:
+            raise ValueError("Shell() calls with username are not supported")
 
-        self.conn = self.do_ssh_login(username=self.username, password=self.password, login_timeout=30, debug=self.debug)
+        # Ensure this was NOT called with password
+        if kwargs.get("password", False) is not False:
+            raise ValueError("Shell() calls with password are not supported")
 
-        #self.login()
+        self.conn = self.do_ssh_login(login_timeout=30, debug=self.debug)
+
+        # Always store the original prompt(s) so we can fallback to them later
         self.default_prompt_list = self.conn.get_prompt()
 
         # Populate the initial prompt list...
@@ -167,33 +163,14 @@ class Shell(HasRequiredTraits):
         return """<Shell: %s>""" % self.host
 
     def do_ssh_login(self,
-        username=None,
-        password=None,
         login_timeout=30,
-        debug=False,
+        debug=0,
     ):
-        assert isinstance(username, str)
         assert isinstance(debug, int)
-        # FIXME - clean up al the globals below... they should not be required
+        assert len(self.account_list) > 0
 
-        global HOST
-        global USERNAME
-        global PASSWORD
-        global DEFAULT_LOGIN_TIMEOUT
-        global DEFAULT_PROMPT_LIST
-        global DEFAULT_PROMPT_TIMEOUT
-
-        if password is None and PASSWORD == "":
-            PASSWORD = getpass("Host='%s' password for %s: " % (hostname, username))
-            self.password = password
-            password = PASSWORD
-
-        elif isinstance(password, str):
-            self.password = password
-            password = PASSWORD
-
+        # FIXME - clean up PrivateKey here...
         private_key=PrivateKey(keytype='rsa').from_file(self.private_key_path)
-        account = Account(USERNAME, PASSWORD, key=private_key)
 
         if self.protocol == "ssh":
             conn = SSH2(driver=self.driver)
@@ -204,16 +181,22 @@ class Shell(HasRequiredTraits):
 
             conn.set_connect_timeout(login_timeout)
             conn.connect(hostname=self.host, port=self.port)
-            conn.login(account)
+            login_success = False
+            for account in self.account_list:
+                conn.login(account)
+                try:
+                    assert isinstance(conn, SSH2)   # This succeeds if logged in...
+                    login_success = True
+                    break
+                except AssertionError as aa:
+                    # login with account failed...
+                    continue
 
-            # Send a blank line to ensure the connection is alive...
-            prompt_idx, prompt_re_match, output = do_command(
-                cmd="", conn=conn, prompt_timeout=2
-            )
-            assert isinstance(prompt_idx, int)
-            assert isinstance(prompt_re_match, re.Match)
-            response = conn.response
-            assert isinstance(response, str)
+            assert login_success is True
+            if login_success is True:
+                self.password = account.password
+            else:
+                raise ValueError("Login to host='%s' failed" % self.host)
 
             conn.set_connect_timeout(DEFAULT_LOGIN_TIMEOUT)
 
@@ -222,19 +205,10 @@ class Shell(HasRequiredTraits):
         else:
             raise ValueError("FATAL: proto='%s' isn't a valid protocol" % proto)
 
-    def deprecated_login(self):
-        self.conn.set_connect_timeout(self.connect_timeout)
-        self.conn.connect(self.host, port=self.port)
-        assert len(self.account_list) > 0
-        self.conn.login(self.account_list[0], app_account=None, flush=True)  # <- FIXME this should use any acct
-
-    def append_account(self):
+    def append_account(self, account):
         # From the exscript docs...
         #     key = PrivateKey.from_file('~/.ssh/id_rsa', 'my_key_password')
-        self.username = getuser()
-        self.password = getpass("Password for %s: " % self.username)
-        acct = Account(self.username, self.password)
-        self.account_list.append(acct)
+        self.account_list.append(account)
 
     def _extend_prompt(self, prompt_list=()):
         retval = list()
@@ -305,7 +279,10 @@ class Shell(HasRequiredTraits):
 
     def execute(self, cmd="", prompt_list=(), timeout=0, template=None, debug=0, consume=True):
         assert isinstance(cmd, str)
-        assert len(cmd.splitlines()) == 1
+        if cmd.strip()=="":
+            assert len(cmd.splitlines()) == 0
+        else:
+            assert len(cmd.splitlines()) == 1
         assert isinstance(timeout, int)
         assert (template is None) or isinstance(template, str)
         assert isinstance(debug, int)
@@ -324,26 +301,33 @@ class Shell(HasRequiredTraits):
 
         if cmd.strip()[0:4]=="sudo":
             pre_sudo_prompts = self.conn.get_prompt()
-            sudo_prompt = re.compile(r"\s+password\s+[^:]+:")
-            prompts_w_sudo = copy.copy(pre_sudo_prompts)
+            # FIXME I removed re.compile from the sudo prompt. Example prompt:
+            #    [sudo] password for mpenning: 
+            sudo_prompt = re.compile(r"[\r\n].+?:")
+            prompts_w_sudo = copy.deepcopy(pre_sudo_prompts)
             prompts_w_sudo.insert(0, sudo_prompt)
             self.conn.set_prompt(prompts_w_sudo)
+
+            # Sending sudo cmd here...
             self.conn.send(cmd+os.linesep)
             prompt_idx, re_match_object = self.conn.expect_prompt()
             # idx==0 is a sudo password prompt...
             if prompt_idx==0:
+                self.conn.set_prompt(self.default_prompt_list)
                 self.conn.send(self.password+os.linesep)
-                prompt_idx = self.conn.expect(prompts_w_sudo)
-                if prompt_idx == 0:
-                    raise ValueError("Invalid sudo password")
-            elif prompt_idx > 0:
-                pass
+                prompt_idx, re_match_object = self.conn.expect_prompt()
+                assert isinstance(prompt_idx, int)
+
             else:
                 raise ValueError("Cannot complete 'execute(cmd='%s')" % cmd)
             self.conn.set_prompt(pre_sudo_prompts)
 
         else:
-            self.conn.execute(cmd)
+            if cmd.strip()=="":
+                #self.conn.execute(cmd+os.linesep)
+                self.conn.execute(cmd)
+            else:
+                self.conn.execute(cmd)
 
         # Reset the prompt list at the end of the command...
         if len(prompt_list) > 0:
@@ -369,6 +353,9 @@ class Shell(HasRequiredTraits):
 
     def expect(self, prompt_list=(), timeout=0, debug=0):
         """Expect prompts, including those in prompt_list"""
+        assert isinstance(debug, int)
+        if debug > 0:
+            pass
 
         normal_timeout = self.conn.get_timeout()
         if timeout > 0:
@@ -420,7 +407,7 @@ class Shell(HasRequiredTraits):
 
         return normal_prompts, custom_prompts
 
-    def close(self, force=False, timeout=0, debug=0, consume=True):
+    def close(self, force=True, timeout=0, debug=0):
         self.conn.close(force=force)
 
     @property
@@ -465,80 +452,6 @@ def do_command(cmd=None, conn=None, prompt_list=(), prompt_timeout=30):
     # FIXME - add matching prompt index and regex here...
     return prompt_idx, prompt_re_match, output
 
-
-
-
-#############################################################################
-#############################################################################
-#############################################################################
-#############################################################################
-##########################    Backups here      #############################
-#############################################################################
-#############################################################################
-#############################################################################
-#############################################################################
-#############################################################################
-
-def do_login(
-    hostname="localhost",
-    driver="generic",
-    username=None,
-    password=None,
-    proto="ssh",
-    login_timeout=30,
-    debug=False,
-):
-    assert isinstance(username, str)
-    assert isinstance(debug, bool)
-
-    global HOST
-    global USERNAME
-    global PASSWORD
-    global DEFAULT_LOGIN_TIMEOUT
-    global DEFAULT_PROMPT_LIST
-    global DEFAULT_PROMPT_TIMEOUT
-
-    # Set the global hostname var...
-    HOST = hostname
-
-    if password is None and PASSWORD == "":
-        PASSWORD = getpass("Host='%s' password for %s: " % (hostname, username))
-        password = PASSWORD
-
-    elif isinstance(password, str):
-        pass
-
-    account = Account(USERNAME, PASSWORD)
-
-    if proto == "ssh":
-        conn = SSH2(driver=driver)
-
-        DEFAULT_LOGIN_TIMEOUT = conn.get_connect_timeout()
-        DEFAULT_PROMPT_LIST = conn.get_prompt()
-        DEFAULT_PROMPT_TIMEOUT = conn.get_timeout()
-
-        conn.set_connect_timeout(login_timeout)
-        conn.connect("localhost")
-        conn.login(account)
-
-        # Send a blank line to ensure the connection is alive...
-        prompt_idx, prompt_re_match, output = do_command(
-            cmd="", conn=conn, prompt_timeout=2
-        )
-        assert isinstance(prompt_idx, int)
-        assert isinstance(prompt_re_match, re.Match)
-        response = conn.response
-        assert isinstance(response, str)
-
-        conn.set_connect_timeout(DEFAULT_LOGIN_TIMEOUT)
-
-        return conn
-
-    else:
-        raise ValueError("FATAL: proto='%s' isn't a valid protocol" % proto)
-
-
-
 @logger.catch
 def main():
 
@@ -551,7 +464,6 @@ def main():
     conn.set_timeout(1)
     uname_output = conn.execute("uname -a")
 
-    print("PWD", conn.execute("pwd"))
     # resetting prompts after intentionally adding junk prompt matches above...
     conn.reset_prompt()
 
