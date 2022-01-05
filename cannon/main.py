@@ -339,11 +339,17 @@ class Shell(HasRequiredTraits):
         else:
             if debug > 0:
                 logger.debug("Calling execute(cmd='%s')" % cmd.strip())
-            if cmd.strip()=="":
-                #self.conn.execute(cmd+os.linesep)
-                self.conn.execute(cmd.strip())
-            else:
-                self.conn.execute(cmd.strip())
+
+            try:
+                if cmd.strip()=="":
+                    #self.conn.execute(cmd+os.linesep)
+                    self.conn.execute(cmd.strip())
+                else:
+                    self.conn.execute(cmd.strip())
+
+            except InvalidCommandException as ee:
+                logger.warning("cmd='%s' appears to be an invalid command" % cmd)
+                continue
 
         # Reset the prompt list at the end of the command...
         if len(prompt_list) > 0:
