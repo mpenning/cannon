@@ -9,6 +9,8 @@ devices with ssh.
 This script will login, run a few show commands
 
 ```python
+import sys
+
 from cannon import Shell, Account
 from loguru import logger
 
@@ -43,21 +45,26 @@ def main():
 
 ```python
 from getpass import getpass
+import sys
 
 from cannon.main import Shell, Account
 
-account = Account("mpenning", getpass("Login password: "))
-conn = Shell(host="127.0.0.1", port=22, account=account, driver="generic", debug=0)
-assert conn is not None
-example_tfsm_template = """Value UNAME_LINE (.+)
+def main():
+    account = Account("mpenning", getpass("Login password: "))
+    conn = Shell(host="127.0.0.1", port=22, account=account, driver="generic", debug=0)
+    assert conn is not None
+    example_tfsm_template = """Value UNAME_LINE (.+)
 
-Start
-  ^${UNAME_LINE}
-"""
-print(conn.execute("sudo uname -a", debug=0, template=example_tfsm_template, timeout=2))
-print(conn.execute("whoami", debug=0, template=None, timeout=2))
-#print("FOO2", conn.response)
-conn.close(force=True)
+    Start
+      ^${UNAME_LINE}
+    """
+    print(conn.execute("sudo uname -a", debug=0, template=example_tfsm_template, timeout=2))
+    print(conn.execute("whoami", debug=0, template=None, timeout=2))
+    #print("FOO2", conn.response)
+    conn.close(force=True)
+
+if __name__=="__main__":
+    main()
 ```
 
 ## Example test suite setup
