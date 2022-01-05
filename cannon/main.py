@@ -1,5 +1,6 @@
 from getpass import getpass, getuser
 from io import StringIO
+import socket
 import time
 import copy
 import sys
@@ -187,7 +188,13 @@ class Shell(HasRequiredTraits):
             DEFAULT_PROMPT_TIMEOUT = conn.get_timeout()
 
             conn.set_connect_timeout(connect_timeout)
-            conn.connect(hostname=self.host, port=self.port)
+            try:
+                conn.connect(hostname=self.host, port=self.port)
+            except socket.timeout as ee:
+                error = "TCP connect timeout while connecting to {0}:{1}".format(self.host, self.port)
+                logger.CRITICAL(error)
+                raise OSError(error)
+
             login_success = False
             for account in self.account_list:
                 conn.login(account)

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cannon"
-version = "0.0.40"
+version = "0.0.41"
 description = "An SSH automation tool based on Exscript"
 authors = [
     "Mike Pennington <mike@pennington.net>",
