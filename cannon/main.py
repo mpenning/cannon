@@ -36,9 +36,12 @@ from Exscript.protocols.exception import InvalidCommandException
 from Exscript.protocols.exception import TimeoutException  # <-- expect timeout
 from Exscript.util.match import any_match
 from Exscript import Account, PrivateKey
-from Exscript.util.log import log_to
 from Exscript.protocols import SSH2
 import Exscript
+
+## Deprecating these for now...
+#from Exscript import Logger as logger_exscript
+#from Exscript.util.log import log_to
 
 from textfsm import TextFSM
 
@@ -90,11 +93,13 @@ described by bigevilbeard, below...
 HOST = ""
 USERNAME = getuser()
 PASSWORD = ""
-DEFAULT_LOGIN_TIMEOUT = 0
+DEFAULT_CONNECT_TIMEOUT = 10
 DEFAULT_PROMPT_LIST = []
 DEFAULT_PROMPT_TIMEOUT = 30
 
-@logger.catch(onerror=lambda _: sys.exit(1))
+logger_id = logger.add(sys.stderr)
+
+@logger.catch(default=True, onerror=lambda _: sys.exit(1))
 def account_factory(username="", password=None, private_key=""):
     assert username != ""
 
@@ -106,7 +111,8 @@ def account_factory(username="", password=None, private_key=""):
         private_key_obj = PrivateKey(keytype='rsa').from_file(self.private_key_path)
 
 
-@logger.catch(onerror=lambda _: sys.exit(1))
+#@log_args
+@logger.catch(default=True, onerror=lambda _: sys.exit(1))
 class Shell(HasRequiredTraits):
     host = Str(value="", required=True)
     port = Range(value=22, low=1, high=65524)
@@ -124,7 +130,7 @@ class Shell(HasRequiredTraits):
     stdout = PrefixList(value=None, values=[None, sys.stdout], required=False)
     stderr = PrefixList(value=sys.stderr, values=[None, sys.stderr], required=False)
     banner_timeout = Range(value=20, low=1, high=30, required=False)
-    connect_timeout = Range(value=30, low=1, high=30, required=False)
+    connect_timeout = Range(value=10, low=1, high=30, required=False)
     prompt_timeout = Range(value=10, low=1, high=65535, required=False)
     prompt_list = List(Str, required=False)
     default_prompt_list = List(re.Pattern, required=False)
@@ -152,7 +158,7 @@ class Shell(HasRequiredTraits):
         if kwargs.get("password", False) is not False:
             raise ValueError("Shell() calls with password are not supported")
 
-        self.conn = self.do_ssh_login(login_timeout=30, debug=self.debug)
+        self.conn = self.do_ssh_login(debug=self.debug)
 
         # Always store the original prompt(s) so we can fallback to them later
         self.default_prompt_list = self.conn.get_prompt()
@@ -163,9 +169,10 @@ class Shell(HasRequiredTraits):
         return """<Shell: %s>""" % self.host
 
     def do_ssh_login(self,
-        login_timeout=30,
+        connect_timeout=10,
         debug=0,
     ):
+        assert isinstance(connect_timeout, int)
         assert isinstance(debug, int)
         assert len(self.account_list) > 0
 
@@ -175,11 +182,11 @@ class Shell(HasRequiredTraits):
         if self.protocol == "ssh":
             conn = SSH2(driver=self.driver)
 
-            DEFAULT_LOGIN_TIMEOUT = conn.get_connect_timeout()
+            DEFAULT_CONNECT_TIMEOUT = conn.get_connect_timeout()
             DEFAULT_PROMPT_LIST = conn.get_prompt()
             DEFAULT_PROMPT_TIMEOUT = conn.get_timeout()
 
-            conn.set_connect_timeout(login_timeout)
+            conn.set_connect_timeout(connect_timeout)
             conn.connect(hostname=self.host, port=self.port)
             login_success = False
             for account in self.account_list:
@@ -198,7 +205,7 @@ class Shell(HasRequiredTraits):
             else:
                 raise ValueError("Login to host='%s' failed" % self.host)
 
-            conn.set_connect_timeout(DEFAULT_LOGIN_TIMEOUT)
+            conn.set_connect_timeout(DEFAULT_CONNECT_TIMEOUT)
 
             return conn
 
@@ -323,11 +330,13 @@ class Shell(HasRequiredTraits):
             self.conn.set_prompt(pre_sudo_prompts)
 
         else:
+            if debug > 0:
+                logger.debug("Calling execute(cmd='%s')" % cmd.strip())
             if cmd.strip()=="":
                 #self.conn.execute(cmd+os.linesep)
-                self.conn.execute(cmd)
+                self.conn.execute(cmd.strip())
             else:
-                self.conn.execute(cmd)
+                self.conn.execute(cmd.strip())
 
         # Reset the prompt list at the end of the command...
         if len(prompt_list) > 0:
@@ -414,15 +423,15 @@ class Shell(HasRequiredTraits):
     def response(self):
         return self.conn.response
 
-@logger.catch
+@logger.catch(default=True, onerror=lambda _: sys.exit(1))
 def reset_conn_parameters(conn=None):
     assert isinstance(conn, SSH2)
-    conn.set_connect_timeout(DEFAULT_LOGIN_TIMEOUT)
+    conn.set_connect_timeout(DEFAULT_CONNECT_TIMEOUT)
     conn.set_prompt(DEFAULT_PROMPT_LIST)
     conn.set_timeout(DEFAULT_PROMPT_TIMEOUT)
 
 
-@logger.catch
+@logger.catch(default=True, onerror=lambda _: sys.exit(1))
 def do_command(cmd=None, conn=None, prompt_list=(), prompt_timeout=30):
     assert isinstance(cmd, str)
 
@@ -452,7 +461,7 @@ def do_command(cmd=None, conn=None, prompt_list=(), prompt_timeout=30):
     # FIXME - add matching prompt index and regex here...
     return prompt_idx, prompt_re_match, output
 
-@logger.catch
+@logger.catch(default=True, onerror=lambda _: sys.exit(1))
 def main():
 
     # login to this system and demo a few commands...
