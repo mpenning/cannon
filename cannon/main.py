@@ -140,6 +140,7 @@ class Shell(HasRequiredTraits):
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
     conn = Any(required=False)
     debug = Range(value=0, low=0, high=5, required=False)
+    allow_invalid_command = Bool(value=True, values=[True, False])
 
     def __init__(self, **kwargs):
         HasRequiredTraits.__init__(self, **kwargs)
@@ -348,8 +349,13 @@ class Shell(HasRequiredTraits):
                     self.conn.execute(cmd.strip())
 
             except InvalidCommandException as ee:
-                logger.warning("cmd='%s' appears to be an invalid command" % cmd)
-                continue
+                print(str(ee))
+                error = "cmd='%s' is an invalid command" % cmd
+                if self.allow_invalid_command is True:
+                    logger.warning(error)
+                else:
+                    logger.critical(error)
+                    raise InvalidCommandException(error)
 
         # Reset the prompt list at the end of the command...
         if len(prompt_list) > 0:
