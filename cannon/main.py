@@ -342,18 +342,13 @@ class Shell(HasRequiredTraits):
                 logger.debug("Calling execute(cmd='%s')" % cmd.strip())
 
             try:
-                if cmd.strip()=="":
-                    #self.conn.execute(cmd+os.linesep)
-                    self.conn.execute(cmd.strip())
-                else:
-                    self.conn.execute(cmd.strip())
+                self.conn.execute(cmd)
 
             except InvalidCommandException as ee:
                 print(str(ee))
-                error = "cmd='%s' is an invalid command" % cmd
-                if self.allow_invalid_command is True:
-                    logger.warning(error)
-                else:
+
+                if self.allow_invalid_command is False:
+                    error = "cmd='%s' is an invalid command" % cmd
                     logger.critical(error)
                     raise InvalidCommandException(error)
 
