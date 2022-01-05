@@ -1,6 +1,6 @@
 # Introduction
 
-cannon is a wrapper around [exscript](https://pypi.python.org/pypi/exscript) to connect with remote server or network 
+[cannon][1] is a wrapper around [exscript][2] to connect with remote server or network 
 devices with ssh.
 
 
@@ -10,28 +10,33 @@ This script will login, run a few show commands
 
 ```python
 from cannon import Shell, Account
+from loguru import logger
 
-sess = Shell(
-    host='route-views.routeviews.org',
-    # route-views doesn't need password
-    account= Account(name='rviews', password=''),
-    debug=0,
-    )
+log_stderr_id = logger.add(sink=sys.stderr)
 
-sess.execute('term len 0')
+@logger.catch(default=True, onerror=lambda _: sys.exit(1))
+def main():
+    sess = Shell(
+        host='route-views.routeviews.org',
+        # route-views doesn't need password
+        account= Account(name='rviews', password=''),
+        debug=0,
+        )
 
-# relax_prompt reduces prompt matching to a minimum... relax_prompt is
-#     useful if the prompt may change while running a series of commands.
-sess.execute('show clock')
+    sess.execute('term len 0')
 
-sess.execute('show version')
-version_text = sess.response
+    # relax_prompt reduces prompt matching to a minimum... relax_prompt is
+    #     useful if the prompt may change while running a series of commands.
+    sess.execute('show clock')
 
-# template is a TextFSM template
-values = sess.execute('show ip int brief',
-    template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")
-print("VALUES "+str(values))
-sess.close()
+    sess.execute('show version')
+    version_text = sess.response
+
+    # template is a TextFSM template
+    values = sess.execute('show ip int brief',
+        template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")
+    print("VALUES "+str(values))
+    sess.close()
 ```
 
 ## Example Usage - Linux
@@ -63,5 +68,5 @@ conn.close(force=True)
 - Connect with `ssh -i id_rsa -p 1236 user@localhost`
 - one command is supported: `ls`
 
-
-.. _exscript: https://pypi.python.org/pypi/exscript
+  [1]: https://pypi.python.org/pypi/cannon    # cannon on pypi
+  [2]: https://pypi.python.org/pypi/exscript  # Exscript on pypi
