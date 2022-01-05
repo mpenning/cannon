@@ -27,8 +27,6 @@ def main():
 
     sess.execute('term len 0')
 
-    # relax_prompt reduces prompt matching to a minimum... relax_prompt is
-    #     useful if the prompt may change while running a series of commands.
     sess.execute('show clock')
 
     sess.execute('show version')
