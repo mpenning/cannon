@@ -191,7 +191,7 @@ class Shell(HasRequiredTraits):
             try:
                 conn.connect(hostname=self.host, port=self.port)
             except socket.timeout as ee:
-                error = "TCP connect timeout while connecting to {0}:{1}".format(self.host, self.port)
+                error = "TCP timeout while connecting to {0}:{1}".format(self.host, self.port)
                 logger.critical(error)
                 raise OSError(error)
 
