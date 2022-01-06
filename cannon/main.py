@@ -40,6 +40,8 @@ from Exscript import Account, PrivateKey
 from Exscript.protocols import SSH2
 import Exscript
 
+import paramiko
+import paramiko.ssh_exceptopn
 #from paramiko.transport import ConnectionResetError
 from paramiko.ssh_exception import SSHException
 
