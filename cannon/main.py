@@ -40,6 +40,8 @@ from Exscript import Account, PrivateKey
 from Exscript.protocols import SSH2
 import Exscript
 
+from paramiko.transport import ConnectionResetError
+
 ## Deprecating these for now...
 #from Exscript import Logger as logger_exscript
 #from Exscript.util.log import log_to
@@ -345,6 +347,10 @@ class Shell(HasRequiredTraits):
         else:
             try:
                 self.conn.execute(cmd)
+
+            except ConnectionResetError as dd:
+                error = "SSH session with {0} was reset while running cmd='{1}'".format(self.host, cmd)
+                raise ConnectionResetError(error)
 
             except InvalidCommandException as ee:
                 print(str(ee))
