@@ -304,6 +304,9 @@ class Shell(HasRequiredTraits):
 
         cmd = cmd.strip()
 
+        if debug > 0:
+            logger.debug("Calling execute(cmd='%s', timeout=%s)" % (cmd, timeout))
+
         if len(prompt_list) > 0:
             self._extend_prompt(prompt_list)
 
@@ -314,6 +317,7 @@ class Shell(HasRequiredTraits):
         # Handle prompt_list...
         self.set_custom_prompts(prompt_list)
 
+        # Handle sudo command...
         if cmd.strip()[0:4]=="sudo":
             pre_sudo_prompts = self.conn.get_prompt()
             # FIXME I removed re.compile from the sudo prompt. Example prompt:
@@ -337,10 +341,8 @@ class Shell(HasRequiredTraits):
                 raise ValueError("Cannot complete 'execute(cmd='%s')" % cmd)
             self.conn.set_prompt(pre_sudo_prompts)
 
+        # Handle non-sudo execute()...
         else:
-            if debug > 0:
-                logger.debug("Calling execute(cmd='%s')" % cmd.strip())
-
             try:
                 self.conn.execute(cmd)
 
