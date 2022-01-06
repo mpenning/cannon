@@ -40,7 +40,7 @@ from Exscript import Account, PrivateKey
 from Exscript.protocols import SSH2
 import Exscript
 
-from paramiko.transport import ConnectionResetError
+#from paramiko.transport import ConnectionResetError
 from paramiko.ssh_exception import SSHException
 
 ## Deprecating these for now...
