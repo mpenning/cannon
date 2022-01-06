@@ -194,12 +194,14 @@ class Shell(HasRequiredTraits):
             conn.set_connect_timeout(connect_timeout)
             try:
                 conn.connect(hostname=self.host, port=self.port)
+
             except socket.timeout as ee:
                 error = "Timeout connecting to TCP port {1} on host:{0}".format(self.host, self.port)
                 logger.critical(error)
                 raise OSError(error)
+
             except paramiko.ssh_exception.SSHException as ee:
-                error = "Connection reset from TCP port {1} on host:{0}".format(self.host, self.port)
+                error = "Connection to host:{0} on TCP port {1} was reset".format(self.host, self.port)
                 logger.critical(error)
                 raise OSError(error)
 
