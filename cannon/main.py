@@ -41,6 +41,7 @@ from Exscript.protocols import SSH2
 import Exscript
 
 from paramiko.transport import ConnectionResetError
+from paramiko.ssh_exception import SSHException
 
 ## Deprecating these for now...
 #from Exscript import Logger as logger_exscript
@@ -195,6 +196,10 @@ class Shell(HasRequiredTraits):
                 conn.connect(hostname=self.host, port=self.port)
             except socket.timeout as ee:
                 error = "Timeout connecting to TCP port {1} on host:{0}".format(self.host, self.port)
+                logger.critical(error)
+                raise OSError(error)
+            except paramiko.ssh_exception.SSHException as ee:
+                error = "Connection reset from TCP port {1} on host:{0}".format(self.host, self.port)
                 logger.critical(error)
                 raise OSError(error)
 
