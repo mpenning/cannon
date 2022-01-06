@@ -41,7 +41,7 @@ from Exscript.protocols import SSH2
 import Exscript
 
 import paramiko
-import paramiko.ssh_exceptopn
+import paramiko.ssh_exception
 #from paramiko.transport import ConnectionResetError
 from paramiko.ssh_exception import SSHException
 
