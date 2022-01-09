@@ -143,9 +143,12 @@ class Shell(HasRequiredTraits):
     account = Any(value=None, required=True)
     account_list = List(Exscript.account.Account, required=False)
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
+    downgrade_ssh_crypto = Bool(value=False, values=[True, False])
+    ssh_attempt_number = Range(value=1, low=1, high=3)
     conn = Any(required=False)
     debug = Range(value=0, low=0, high=5, required=False)
     allow_invalid_command = Bool(value=True, values=[True, False])
+    MAX_SSH_ATTEMPT = Int(3)
 
     def __init__(self, **kwargs):
         HasRequiredTraits.__init__(self, **kwargs)
@@ -186,26 +189,55 @@ class Shell(HasRequiredTraits):
         # FIXME - clean up PrivateKey here...
         private_key=PrivateKey(keytype='rsa').from_file(self.private_key_path)
 
+        self.downgrade_ssh_crypto = False
         if self.protocol == "ssh":
-            conn = SSH2(driver=self.driver)
 
-            DEFAULT_CONNECT_TIMEOUT = conn.get_connect_timeout()
-            DEFAULT_PROMPT_LIST = conn.get_prompt()
-            DEFAULT_PROMPT_TIMEOUT = conn.get_timeout()
 
-            conn.set_connect_timeout(connect_timeout)
-            try:
-                conn.connect(hostname=self.host, port=self.port)
+            for self.ssh_attempt_number in [1, 2, 3]:
 
-            except socket.timeout as ee:
-                error = "Timeout connecting to TCP port {1} on host:{0}".format(self.host, self.port)
-                logger.critical(error)
-                raise OSError(error)
+                assert self.ssh_attempt_number <= self.MAX_SSH_ATTEMPT
 
-            except paramiko.ssh_exception.SSHException as ee:
-                error = "Connection to host:{0} on TCP port {1} was reset".format(self.host, self.port)
-                logger.critical(error)
-                raise OSError(error)
+                # You have to change allowed ciphers / key exchange options
+                # **before** the connection
+                #     -> https://stackoverflow.com/a/31303321/667301
+                if self.downgrade_ssh_crypto is True:
+                    paramiko.Transport._preferred_ciphers = ('aes128-cbc', '3des-cbc',)
+                    paramiko.Transport._preferred_kex = ('diffie-hellman-group-exchange-sha1', 'diffie-hellman-group14-sha1', 'diffie-hellman-group1-sha1',)
+
+                conn = SSH2(driver=self.driver)
+
+                # Save default values...
+                DEFAULT_CONNECT_TIMEOUT = conn.get_connect_timeout()
+                DEFAULT_PROMPT_LIST = conn.get_prompt()
+                DEFAULT_PROMPT_TIMEOUT = conn.get_timeout()
+
+                # FIXME - Exscript should be handling this but the pypi pkg doesn't
+                #
+
+                conn.set_connect_timeout(connect_timeout)
+                try:
+                    conn.connect(hostname=self.host, port=self.port)
+                    break
+
+                except socket.timeout as ee:
+                    self.downgrade_ssh_crypto = True
+                    if self.ssh_attempt_number == self.MAX_SSH_ATTEMPT:
+                        error = "Timeout connecting to TCP port {1} on host:{0}".format(self.host, self.port)
+                        logger.critical(error)
+                        raise OSError(error)
+                    else:
+                        assert self.ssh_attempt_number < self.MAX_SSH_ATTEMPT
+                        time.sleep(0.5)
+
+                except paramiko.ssh_exception.SSHException as ee:
+                    self.downgrade_ssh_crypto = True
+                    if self.ssh_attempt_number == self.MAX_SSH_ATTEMPT: 
+                        error = "Connection to host:{0} on TCP port {1} was reset".format(self.host, self.port)
+                        logger.critical(error)
+                        raise OSError(error)
+                    else:
+                        assert self.ssh_attempt_number < self.MAX_SSH_ATTEMPT
+                        time.sleep(0.5)
 
             login_success = False
             for account in self.account_list:
