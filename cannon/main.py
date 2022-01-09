@@ -1,11 +1,18 @@
 from getpass import getpass, getuser
 from io import StringIO
+import pkg_resources
 import socket
 import time
 import copy
 import sys
 import re
 import os
+
+pkg_resources.require("Exscript==2.6.3")
+pkg_resources.require("loguru==0.5.3")
+pkg_resources.require("traits==6.3.2")
+pkg_resources.require("textfsm==1.1.2")
+
 
 from traits.api import (
     Any,
@@ -121,7 +128,7 @@ def account_factory(username="", password=None, private_key=""):
 @logger.catch(default=True, onerror=lambda _: sys.exit(1))
 class Shell(HasRequiredTraits):
     host = Str(value="", required=True)
-    port = Range(value=22, low=1, high=65524)
+    port = Range(value=22, low=1, high=65534)
     username = Str(value=getuser(), required=False)
     password = Str(value='', required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
@@ -132,7 +139,7 @@ class Shell(HasRequiredTraits):
     termtype = PrefixList(
         value="dumb", values=["dumb", "xterm", "vt100"], required=False
     )
-    protocol = PrefixList(value='ssh', values=['ssh'])
+    protocol = PrefixList(value='ssh', values=['ssh'], required=False)
     stdout = PrefixList(value=None, values=[None, sys.stdout], required=False)
     stderr = PrefixList(value=sys.stderr, values=[None, sys.stderr], required=False)
     banner_timeout = Range(value=20, low=1, high=30, required=False)
@@ -144,10 +151,10 @@ class Shell(HasRequiredTraits):
     account_list = List(Exscript.account.Account, required=False)
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
     downgrade_ssh_crypto = Bool(value=False, values=[True, False])
-    ssh_attempt_number = Range(value=1, low=1, high=3)
+    ssh_attempt_number = Range(value=1, low=1, high=3, required=False)
     conn = Any(required=False)
     debug = Range(value=0, low=0, high=5, required=False)
-    allow_invalid_command = Bool(value=True, values=[True, False])
+    allow_invalid_command = Bool(value=True, values=[True, False], required=False)
     MAX_SSH_ATTEMPT = Int(3)
 
     def __init__(self, **kwargs):
@@ -191,7 +198,6 @@ class Shell(HasRequiredTraits):
 
         self.downgrade_ssh_crypto = False
         if self.protocol == "ssh":
-
 
             for self.ssh_attempt_number in [1, 2, 3]:
 
@@ -493,62 +499,5 @@ def reset_conn_parameters(conn=None):
     conn.set_timeout(DEFAULT_PROMPT_TIMEOUT)
 
 
-@logger.catch(default=True, onerror=lambda _: sys.exit(1))
-def do_command(cmd=None, conn=None, prompt_list=(), prompt_timeout=30):
-    assert isinstance(cmd, str)
-
-    output = None
-    match_prompt_idx = None
-
-    if prompt_list == () or prompt_list == []:
-        conn.set_prompt(DEFAULT_PROMPT_LIST)
-
-    conn.set_timeout(prompt_timeout)
-    try:
-        prompt_idx, prompt_re_match = conn.execute(cmd)
-
-    except TimeoutException as ee:
-        error = "Host=%s timeout after %s seconds while %s waiting for %s" % (
-            "FIXME",
-            prompt_timeout,
-            cmd,
-        )
-        raise TimeoutException(error)
-
-    output = conn.response
-    assert isinstance(output, str)
-
-    reset_conn_parameters(conn=conn)
-
-    # FIXME - add matching prompt index and regex here...
-    return prompt_idx, prompt_re_match, output
-
-@logger.catch(default=True, onerror=lambda _: sys.exit(1))
-def main():
-
-    # login to this system and demo a few commands...
-    conn = Shell(username="mpenning", host="localhost")
-    output = conn.execute("ls -la | wc -l")
-
-    # conn.set_prompt([r"\]\#", r"\]\$"])
-    conn.set_prompt([r"---", r"==="])
-    conn.set_timeout(1)
-    uname_output = conn.execute("uname -a")
-
-    # resetting prompts after intentionally adding junk prompt matches above...
-    conn.reset_prompt()
-
-    # sudo example...
-    conn.set_timeout(2)
-    output = conn.execute("sudo ls -la")
-
-    # Parse conn.response for file name and permissions... build a dict with the results
-    file_permission_dict = dict()
-    for permission_str, filename in any_match(output, r"^\s*(\S+)\s.+?\s+(\S+)\s*$"):
-        print("BAR", permission_str, filename)
-
-    conn.send("exit\r")
-    conn.close()
-
 if __name__=="__main__":
-    main()
+    pass
