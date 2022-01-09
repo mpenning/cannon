@@ -20,7 +20,8 @@ import transitions
 
 r"""
 cannon - Python ssh automation
-Copyright (C) 2020-2021 David Michael Pennington
+Copyright (C) 2022      David Michael Pennington
+Copyright (C) 2020-2021 David Michael Pennington at Cisco Systems
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are

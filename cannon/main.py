@@ -261,7 +261,6 @@ class Shell(HasRequiredTraits):
         while not finished:
             cmd = input()
             self.execute(cmd.strip(), consume=False)
-            time.sleep(0.1)
 
     def tfsm(self, template=None, input_str=None):
         """Run the textfsm template against input_str"""
