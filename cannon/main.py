@@ -1,8 +1,40 @@
+
+from traits.api import (
+    Any,
+    Str,
+    Bool,
+    Int,
+    File,
+    List,
+    Range,
+    PrefixList,
+    HasRequiredTraits,
+)
+from Exscript.protocols.exception import InvalidCommandException
+from Exscript.protocols.exception import TimeoutException  # <-- expect timeout
+from Exscript import Account, PrivateKey
+from Exscript.protocols import SSH2
+import Exscript
+
+#from paramiko.transport import ConnectionResetError
+from paramiko.ssh_exception import SSHException
+import paramiko.ssh_exception
+import paramiko
+
+from textfsm import TextFSM
+
+from loguru import logger
+
+import arrow
+
+
 from getpass import getpass, getuser
 from io import StringIO
 import pkg_resources
 import socket
+import atexit
 import time
+import json
 import copy
 import sys
 import re
@@ -12,23 +44,7 @@ pkg_resources.require("Exscript==2.6.3")
 pkg_resources.require("loguru==0.5.3")
 pkg_resources.require("traits==6.3.2")
 pkg_resources.require("textfsm==1.1.2")
-
-
-from traits.api import (
-    Any,
-    CStr,
-    Str,
-    Bool,
-    Int,
-    File,
-    Undefined,
-    ReadOnly,
-    Disallow,
-    PrefixList,
-)
-from traits.api import PrefixList, List, Range, Subclass
-from traits.api import HasRequiredTraits
-from traits.api import Constant
+pkg_resources.require("arrow==1.2.1")
 
 # Base class for server tests...
 # - Exscript/tests/Exscript/protocols/ProtocolTest.py
@@ -39,26 +55,12 @@ from traits.api import Constant
 # Test suite for the Dummy client...
 # - Exscript/tests/Exscript/protocols/DummyTest.py
 
-from Exscript.protocols.exception import ExpectCancelledException
-from Exscript.protocols.exception import InvalidCommandException
-from Exscript.protocols.exception import TimeoutException  # <-- expect timeout
-from Exscript.util.match import any_match
-from Exscript import Account, PrivateKey
-from Exscript.protocols import SSH2
-import Exscript
 
-import paramiko
-import paramiko.ssh_exception
-#from paramiko.transport import ConnectionResetError
-from paramiko.ssh_exception import SSHException
 
 ## Deprecating these for now...
 #from Exscript import Logger as logger_exscript
 #from Exscript.util.log import log_to
 
-from textfsm import TextFSM
-
-from loguru import logger
 
 """
 Copyright 2022 - David Michael Pennington
@@ -121,7 +123,7 @@ def account_factory(username="", password=None, private_key=""):
 
     if isinstance(private_key, str) and private_key!="":
         private_key_path = os.path.expanduser(private_key)
-        private_key_obj = PrivateKey(keytype='rsa').from_file(self.private_key_path)
+        private_key_obj = PrivateKey(keytype='rsa').from_file(private_key_path)
 
 
 #@log_args
@@ -149,6 +151,9 @@ class Shell(HasRequiredTraits):
     default_prompt_list = List(re.Pattern, required=False)
     account = Any(value=None, required=True)
     account_list = List(Exscript.account.Account, required=False)
+    logfile = File(value=os.path.expanduser("/dev/null"))
+    json_logfile = File(value="/dev/null", required=False)
+    jh = Any(value=None)
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
     downgrade_ssh_crypto = Bool(value=False, values=[True, False])
     ssh_attempt_number = Range(value=1, low=1, high=3, required=False)
@@ -181,6 +186,9 @@ class Shell(HasRequiredTraits):
         self.default_prompt_list = self.conn.get_prompt()
 
         # Populate the initial prompt list...
+        if self.json_logfile != "/dev/null":
+            self.open_json_log()
+            self.json_log_entry(cmd="ssh2", action="login", timeout=False)
 
     def __repr__(self):
         return """<Shell: %s>""" % self.host
@@ -235,7 +243,7 @@ class Shell(HasRequiredTraits):
                         assert self.ssh_attempt_number < self.MAX_SSH_ATTEMPT
                         time.sleep(0.5)
 
-                except paramiko.ssh_exception.SSHException as ee:
+                except SSHException as ee:
                     self.downgrade_ssh_crypto = True
                     if self.ssh_attempt_number == self.MAX_SSH_ATTEMPT: 
                         error = "Connection to host:{0} on TCP port {1} was reset".format(self.host, self.port)
@@ -268,6 +276,45 @@ class Shell(HasRequiredTraits):
 
         else:
             raise ValueError("FATAL: proto='%s' isn't a valid protocol" % proto)
+
+    ## TODO - we should use a true try / except here...
+    def open_json_log(self):
+        if self.json_logfile == "/dev/null":
+            return None
+        else:
+            self.jh = open(os.path.expanduser(self.json_logfile), "w",
+                encoding="utf-8")
+            atexit.register(self.close_json_log)
+            return True
+
+    ## TODO - we should use a true try / except here...
+    def close_json_log(self):
+        if self.json_logfile == "/dev/null":
+            return None
+        else:
+            self.jh.flush()
+            self.jh.close()
+            return True
+
+    def json_log_entry(self, cmd=None, action=None, result=None, timeout=False):
+        if self.json_logfile == "/dev/null":
+            return None
+        assert isinstance(cmd, str)
+        assert isinstance(action, str)
+        assert action in set(["login", "execute", "send", "expect", "output"])
+        assert isinstance(result, str) or (result is None)
+        assert isinstance(timeout, bool)
+        # Pretty json output... or reference json docs
+        #     https://stackoverflow.com/a/12944035/667301
+        self.jh.write(json.dumps(
+            {"time": str(arrow.now()),
+             "cmd": cmd,
+             "host": self.host,
+             "action": action,
+             "result": result,
+             "timeout": timeout,
+             }, indent=4, sort_keys=True)+","
+            +os.linesep)
 
     def append_account(self, account):
         # From the exscript docs...
@@ -365,6 +412,8 @@ class Shell(HasRequiredTraits):
         # Handle prompt_list...
         self.set_custom_prompts(prompt_list)
 
+        self.json_log_entry(cmd=cmd, action="execute", timeout=False)
+
         # Handle sudo command...
         if cmd.strip()[0:4]=="sudo":
             pre_sudo_prompts = self.conn.get_prompt()
@@ -414,17 +463,23 @@ class Shell(HasRequiredTraits):
         if self.conn.get_timeout() != normal_timeout:
             self.conn.set_timeout(normal_timeout)
 
+        # save the raw response...
+        cmd_output = self.conn.response
+
+        self.json_log_entry(cmd=cmd, action="output", result=cmd_output, timeout=False)
         ## TextFSM
         ## If template is specified, parse the response into a list of dicts...
         if isinstance(template, str):
-            return self.tfsm(template, self.conn.response)
+            return self.tfsm(template, cmd_output)
         else:
-            return self.conn.response
+            return cmd_output
 
     def send(self, cmd="", debug=0):
         assert isinstance(cmd, str)
         assert len(cmd.splitlines()) == 1
         assert isinstance(debug, int)
+
+        self.json_log_entry(cmd=cmd, action="send", result=None, timeout=False)
 
         self.conn.send(cmd)
 
@@ -450,6 +505,7 @@ class Shell(HasRequiredTraits):
         if len(prompt_list) > 0:
             self.reset_prompt()
 
+        self.json_log_entry(cmd=cmd, action="expect", result=None, timeout=False)
         return prompt_idx, re_match_object
 
     def set_timeout(self, timeout=0):

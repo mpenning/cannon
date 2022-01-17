@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cannon"
-version = "0.0.55"
+version = "0.0.56"
 description = "An SSH automation tool based on Exscript"
 authors = [
     "Mike Pennington <mike@pennington.net>",
@@ -35,6 +35,7 @@ exscript = "2.6.3"
 loguru = "0.5.3"
 traits = "6.3.2"
 textfsm = "1.1.2"
+arrow = "1.2.1"
 
 
 [tool.poetry.dev-dependencies]

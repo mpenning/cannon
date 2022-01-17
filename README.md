@@ -23,6 +23,7 @@ def main():
         # route-views doesn't need password
         account= Account(name='rviews', password=''),
         debug=0,
+        json_logfile='/tmp/cmd_log.json',
         )
 
     sess.execute('term len 0')
