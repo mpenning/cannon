@@ -1,4 +1,6 @@
 
+from ciscoconfparse import is_valid_ipv4_addr, is_valid_ipv6_addr
+
 from traits.api import (
     Any,
     Str,
@@ -20,6 +22,7 @@ import Exscript
 from paramiko.ssh_exception import SSHException
 import paramiko.ssh_exception
 import paramiko
+
 
 from textfsm import TextFSM
 
@@ -181,7 +184,7 @@ class Shell(HasRequiredTraits):
             raise ValueError("Shell() calls with password are not supported")
 
         # Check whether host matches an ip address in the inventory...
-        host_address = self.search_inventory_for_host(self.host)
+        host_address = self.search_inventory_for_host_address(self.host)
         print("DISCOVERED HOST in %s" % self.inventory, host_address)
 
         self.conn = self.do_ssh_login(debug=self.debug)
@@ -197,12 +200,22 @@ class Shell(HasRequiredTraits):
     def __repr__(self):
         return """<Shell: %s>""" % self.host
 
-    def search_inventory_for_host(self, host=None):
+    def search_inventory_for_host_address(self, host=None):
+        """Use an inventory to map the input host to an IPv4 or IPv6 address"""
+
+        if is_valid_ipv4_addr(host):
+            return host
+        elif is_valid_ipv6_addr(host):
+            return host
+
         for line in self.iter_inventory_lines():
-            if re.search(r"^\s*(%s)" % self.host.lower(), line.lower()):
-                print("MATCH host name to inventory", self.host, line)
-                sys.exit(0)
-                break
+            mm = re.search(r"^\s*({0})\s.*?(ansible_host)\s*=\s*(\S+)".format(host.lower()), line.lower())
+            if mm is not None:
+                host_ip = mm.group(2)
+                assert is_valid_ipv4_addr(host_ip) or is_valid_ipv6_addr(host_ip)
+                print("MATCH host name to inventory", host_ip, line)
+                return host_ip
+        return None
 
     def iter_inventory_lines(self):
         if os.path.isfile(os.path.expanduser(self.inventory)):
