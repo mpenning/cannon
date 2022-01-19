@@ -206,9 +206,12 @@ class Shell(HasRequiredTraits):
                 break
 
     def iter_inventory_lines(self):
-        with open(self.inventory, 'r', encoding="utf=8") as fh:
-            for line in fh.read().splitlines():
-                yield line.lower()
+        if os.path.isfile(os.path.expanduser(self.inventory)):
+            with open(self.inventory, 'r', encoding="utf=8") as fh:
+                for line in fh.read().splitlines():
+                    yield line.lower()
+        else:
+            raise OSError("Cannot find inventory file named '%s'" % self.inventory)
 
     def do_ssh_login(self,
         connect_timeout=10,
