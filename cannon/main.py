@@ -134,6 +134,7 @@ class Shell(HasRequiredTraits):
     username = Str(value=getuser(), required=False)
     password = Str(value='', required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
+    inventory=File(value=os.path.expanduser("~/inventory.ini"))
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
         value="generic", values=["generic", "shell", "junos", "ios"], required=False
@@ -180,6 +181,10 @@ class Shell(HasRequiredTraits):
         if kwargs.get("password", False) is not False:
             raise ValueError("Shell() calls with password are not supported")
 
+        # Check whether host matches an ip address in the inventory...
+        host_address = self.search_inventory_for_host(self.host)
+        print("HOST", host_address)
+
         self.conn = self.do_ssh_login(debug=self.debug)
 
         # Always store the original prompt(s) so we can fallback to them later
@@ -192,6 +197,18 @@ class Shell(HasRequiredTraits):
 
     def __repr__(self):
         return """<Shell: %s>""" % self.host
+
+    def search_inventory_for_host(self, host=None):
+        for line in self.read_inventory():
+            if re.search(r"^\s*(%s)" % self.host, line.lower()):
+                print("MATCH", self.host, line)
+                sys.exit(0)
+                break
+
+    def iter_inventory_lines(self):
+        with open(self.inventory, 'r', encoding="utf=8") as fh:
+            for line in fh.read().splitlines():
+                yield line.lower()
 
     def do_ssh_login(self,
         connect_timeout=10,
