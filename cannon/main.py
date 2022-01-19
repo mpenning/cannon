@@ -199,7 +199,7 @@ class Shell(HasRequiredTraits):
         return """<Shell: %s>""" % self.host
 
     def search_inventory_for_host(self, host=None):
-        for line in self.read_inventory():
+        for line in self.iter_inventory_lines():
             if re.search(r"^\s*(%s)" % self.host, line.lower()):
                 print("MATCH", self.host, line)
                 sys.exit(0)
