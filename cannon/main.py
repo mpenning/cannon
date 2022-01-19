@@ -134,7 +134,7 @@ class Shell(HasRequiredTraits):
     username = Str(value=getuser(), required=False)
     password = Str(value='', required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
-    inventory=File(value=os.path.expanduser("~/inventory.ini"))
+    inventory=File(value=os.path.expanduser("~/inventory.ini"), required=False)
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
         value="generic", values=["generic", "shell", "junos", "ios"], required=False
@@ -152,7 +152,6 @@ class Shell(HasRequiredTraits):
     default_prompt_list = List(re.Pattern, required=False)
     account = Any(value=None, required=True)
     account_list = List(Exscript.account.Account, required=False)
-    logfile = File(value=os.path.expanduser("/dev/null"))
     json_logfile = File(value="/dev/null", required=False)
     jh = Any(value=None)
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
@@ -200,8 +199,8 @@ class Shell(HasRequiredTraits):
 
     def search_inventory_for_host(self, host=None):
         for line in self.iter_inventory_lines():
-            if re.search(r"^\s*(%s)" % self.host, line.lower()):
-                print("MATCH", self.host, line)
+            if re.search(r"^\s*(%s)" % self.host.lower(), line.lower()):
+                print("MATCH host name to inventory", self.host, line)
                 sys.exit(0)
                 break
 
