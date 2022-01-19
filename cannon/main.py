@@ -182,7 +182,7 @@ class Shell(HasRequiredTraits):
 
         # Check whether host matches an ip address in the inventory...
         host_address = self.search_inventory_for_host(self.host)
-        print("HOST", host_address)
+        print("DISCOVERED HOST in %s" % self.inventory, host_address)
 
         self.conn = self.do_ssh_login(debug=self.debug)
 
