@@ -1,3 +1,3 @@
 #!/bin/bash
 
-echo "PASS"
+pytest -v test_linux_server.py
