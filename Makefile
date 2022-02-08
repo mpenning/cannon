@@ -1,6 +1,9 @@
 #DOCHOST ?= $(shell bash -c 'read -p "documentation host: " dochost; echo $$dochost')
 VERSION := $(shell grep version pyproject.toml | sed -r 's/^version\s*=\s*"(\S+?)"/\1/g')
 
+.PHONY: style
+style:
+	pylama --ignore=E501,E301,E302,E265,E266 cannon/main.py | less -XR
 .PHONY: pypi
 pypi:
 	make clean
