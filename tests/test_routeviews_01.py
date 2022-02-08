@@ -19,18 +19,23 @@ def test_routeviews_all_cmds():
             assert "6447" in output_line
             break
     else:
+        # Fail if no match on "6447"...
         assert False
 
-    # FIXME add more output parsing below...
-    conn.execute('show proc cpu sort')
-    conn.execute('show inventory')
-    conn.execute('show users')
+    # Skipping these commands for now...
+    #conn.execute('show proc cpu sort')
+    #conn.execute('show inventory')
+    #conn.execute('show users')
+    #conn.execute('show version')
+
+    # FIXME add more output assertions below...
     conn.execute('ping 4.2.2.2')
 
-    for ii in range(0, 3):
-        conn.execute('show version')
-    version = conn.response
-    conn.close()
+    try:
+        conn.execute('exit')
+        conn.close()
+    except:
+        pass
 
 #intfs = conn.execute('show ip int brief', template="""Value INTF (\S+)\nValue IPADDR (\S+)\nValue STATUS (up|down|administratively down)\nValue PROTO (up|down)\n\nStart\n  ^${INTF}\s+${IPADDR}\s+\w+\s+\w+\s+${STATUS}\s+${PROTO} -> Record""")
 #print(intfs)

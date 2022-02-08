@@ -198,6 +198,7 @@ class Shell(HasRequiredTraits):
         print("DISCOVERED HOST in %s" % self.inventory, host_address)
 
         self.conn = self.do_ssh_login(debug=self.debug)
+        self.allow_invalid_command = True
 
         # Always store the original prompt(s) so we can fallback to them later
         self.default_prompt_list = self.conn.get_prompt()
@@ -537,8 +538,7 @@ class Shell(HasRequiredTraits):
                 )
                 raise ConnectionResetError(error)
 
-            except InvalidCommandException as ee:
-                print(str(ee))
+            except InvalidCommandException:
 
                 if self.allow_invalid_command is False:
                     error = "cmd='%s' is an invalid command" % cmd
