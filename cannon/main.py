@@ -1,6 +1,3 @@
-
-from ciscoconfparse import is_valid_ipv4_addr, is_valid_ipv6_addr
-
 from traits.api import (
     Any,
     Str,
@@ -18,7 +15,7 @@ from Exscript import Account, PrivateKey
 from Exscript.protocols import SSH2
 import Exscript
 
-#from paramiko.transport import ConnectionResetError
+# from paramiko.transport import ConnectionResetError
 from paramiko.ssh_exception import SSHException
 import paramiko.ssh_exception
 import paramiko
@@ -33,8 +30,9 @@ import arrow
 
 from getpass import getpass, getuser
 from io import StringIO
+from ipaddress import ip_address as stdlib_ip_factory
+import socket as sock
 import pkg_resources
-import socket
 import atexit
 import time
 import json
@@ -43,11 +41,12 @@ import sys
 import re
 import os
 
+# tests may fail if there are version conflicts...
 pkg_resources.require("Exscript==2.6.3")
 pkg_resources.require("loguru==0.5.3")
 pkg_resources.require("traits==6.3.2")
 pkg_resources.require("textfsm==1.1.2")
-pkg_resources.require("arrow==1.2.1")
+pkg_resources.require("arrow>=1.2.1")
 
 # Base class for server tests...
 # - Exscript/tests/Exscript/protocols/ProtocolTest.py
@@ -59,10 +58,9 @@ pkg_resources.require("arrow==1.2.1")
 # - Exscript/tests/Exscript/protocols/DummyTest.py
 
 
-
 ## Deprecating these for now...
-#from Exscript import Logger as logger_exscript
-#from Exscript.util.log import log_to
+# from Exscript import Logger as logger_exscript
+# from Exscript.util.log import log_to
 
 
 """
@@ -117,27 +115,38 @@ DEFAULT_PROMPT_TIMEOUT = 30
 
 logger_id = logger.add(sys.stderr)
 
+
+def valid_path(filepath=""):
+    return os.path.isfile(os.path.expanduser(filepath))
+
+
 @logger.catch(default=True, onerror=lambda _: sys.exit(1))
-def account_factory(username="", password=None, private_key=""):
+def account_factory(username=getuser(), password=None, private_key="", keytype="rsa"):
     assert username != ""
+    assert keytype in set(["rsa", "dsa", "ecdsa", "ed25519"])
 
     if password is None:
-        password = getpass("Login password for %s" % username)
+        password = getpass("Login password for %s: " % username)
 
-    if isinstance(private_key, str) and private_key!="":
-        private_key_path = os.path.expanduser(private_key)
-        private_key_obj = PrivateKey(keytype='rsa').from_file(private_key_path)
+    private_key_obj = None
+    if isinstance(private_key, str) and private_key != "":
+        keypath = os.path.expanduser(private_key)
+        assert os.path.isfile(keypath)
+        private_key_obj = PrivateKey(keytype=keytype).from_file(keypath)
+
+    account = Account(name=username, password=password, key=private_key_obj)
+    return account
 
 
-#@log_args
+# @log_args
 @logger.catch(default=True, onerror=lambda _: sys.exit(1))
 class Shell(HasRequiredTraits):
     host = Str(value="", required=True)
     port = Range(value=22, low=1, high=65534)
     username = Str(value=getuser(), required=False)
-    password = Str(value='', required=False)
+    password = Str(value="", required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
-    inventory=File(value=os.path.expanduser("~/inventory.ini"), required=False)
+    inventory = File(value=os.path.expanduser("~/inventory.ini"), required=False)
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
         value="generic", values=["generic", "shell", "junos", "ios"], required=False
@@ -145,7 +154,7 @@ class Shell(HasRequiredTraits):
     termtype = PrefixList(
         value="dumb", values=["dumb", "xterm", "vt100"], required=False
     )
-    protocol = PrefixList(value='ssh', values=['ssh'], required=False)
+    protocol = PrefixList(value="ssh", values=["ssh"], required=False)
     stdout = PrefixList(value=None, values=[None, sys.stdout], required=False)
     stderr = PrefixList(value=sys.stderr, values=[None, sys.stderr], required=False)
     banner_timeout = Range(value=20, low=1, high=30, required=False)
@@ -165,10 +174,11 @@ class Shell(HasRequiredTraits):
     allow_invalid_command = Bool(value=True, values=[True, False], required=False)
     MAX_SSH_ATTEMPT = Int(3)
 
-    def __init__(self, **kwargs):
-        HasRequiredTraits.__init__(self, **kwargs)
+    def __init__(self, **traits):
+        super().__init__(**traits)
 
         assert self.host != ""
+        assert isinstance(self.port, int)
         assert len(self.account_list) == 0
         if isinstance(self.account, Account):
             self.append_account(self.account)
@@ -176,11 +186,11 @@ class Shell(HasRequiredTraits):
             raise ValueError("Account must be included in the Shell() call")
 
         # Ensure this was NOT called with username
-        if kwargs.get("username", False) is not False:
+        if traits.get("username", False) is not False:
             raise ValueError("Shell() calls with username are not supported")
 
         # Ensure this was NOT called with password
-        if kwargs.get("password", False) is not False:
+        if traits.get("password", False) is not False:
             raise ValueError("Shell() calls with password are not supported")
 
         # Check whether host matches an ip address in the inventory...
@@ -200,32 +210,57 @@ class Shell(HasRequiredTraits):
     def __repr__(self):
         return """<Shell: %s>""" % self.host
 
-    def search_inventory_for_host_address(self, host=None):
-        """Use an inventory to map the input host to an IPv4 or IPv6 address"""
+    def search_inventory_for_host_address(self, hostname=None):
+        """Use an inventory file to map the input hostname to an IPv4 or IPv6 address"""
+        return None
 
-        if is_valid_ipv4_addr(host):
-            return host
-        elif is_valid_ipv6_addr(host):
-            return host
+        # If this resolves to a valid ipv4 string, return the ipv4 string
+        valid_ipv4 = sock.getaddrinfo(hostname, None, sock.AF_INET)[0][4][0]
+        logger.debug(valid_ipv4)
+        try:
+            if stdlib_ip_factory(valid_ipv4):
+                return valid_ipv4
+        except ValueError:
+            return None
+
+        # If this resolves to a valid ipv6 string, return the ipv6 string
+        valid_ipv6 = sock.getaddrinfo(hostname, None, sock.AF_INET6)[0][4][0]
+        logger.debug(valid_ipv6)
+        try:
+            if stdlib_ip_factory(valid_ipv6):
+                return valid_ipv6
+        except ValueError:
+            return None
 
         for line in self.iter_inventory_lines():
-            mm = re.search(r"^\s*({0})\s.*?(ansible_host)\s*=\s*(\S+)".format(host.lower()), line.lower())
+            # Try to resolve the address as an ansible hostfile...
+            mm = re.search(
+                r"^\s*({0})\s.*?(ansible_host)\s*=\s*(\S+)".format(hostname.lower()),
+                line.lower(),
+            )
             if mm is not None:
                 host_ip = mm.group(2)
-                assert is_valid_ipv4_addr(host_ip) or is_valid_ipv6_addr(host_ip)
+                assert stdlib_ip_factory(host_ip)  # This will raise a ValueError
                 print("MATCH host name to inventory", host_ip, line)
                 return host_ip
+
+        # Raise a non-fatal error...
+        logger.warning(
+            "Could not find hostname=%s in the inventory file: %s"
+            % (hostname, self.inventory)
+        )
         return None
 
     def iter_inventory_lines(self):
         if os.path.isfile(os.path.expanduser(self.inventory)):
-            with open(self.inventory, 'r', encoding="utf=8") as fh:
+            with open(self.inventory, "r", encoding="utf=8") as fh:
                 for line in fh.read().splitlines():
                     yield line.lower()
         else:
             raise OSError("Cannot find inventory file named '%s'" % self.inventory)
 
-    def do_ssh_login(self,
+    def do_ssh_login(
+        self,
         connect_timeout=10,
         debug=0,
     ):
@@ -234,7 +269,7 @@ class Shell(HasRequiredTraits):
         assert len(self.account_list) > 0
 
         # FIXME - clean up PrivateKey here...
-        private_key=PrivateKey(keytype='rsa').from_file(self.private_key_path)
+        private_key = PrivateKey(keytype="rsa").from_file(self.private_key_path)
 
         self.downgrade_ssh_crypto = False
         if self.protocol == "ssh":
@@ -247,8 +282,15 @@ class Shell(HasRequiredTraits):
                 # **before** the connection
                 #     -> https://stackoverflow.com/a/31303321/667301
                 if self.downgrade_ssh_crypto is True:
-                    paramiko.Transport._preferred_ciphers = ('aes128-cbc', '3des-cbc',)
-                    paramiko.Transport._preferred_kex = ('diffie-hellman-group-exchange-sha1', 'diffie-hellman-group14-sha1', 'diffie-hellman-group1-sha1',)
+                    paramiko.Transport._preferred_ciphers = (
+                        "aes128-cbc",
+                        "3des-cbc",
+                    )
+                    paramiko.Transport._preferred_kex = (
+                        "diffie-hellman-group-exchange-sha1",
+                        "diffie-hellman-group14-sha1",
+                        "diffie-hellman-group1-sha1",
+                    )
 
                 conn = SSH2(driver=self.driver)
 
@@ -265,10 +307,12 @@ class Shell(HasRequiredTraits):
                     conn.connect(hostname=self.host, port=self.port)
                     break
 
-                except socket.timeout as ee:
+                except sock.timeout as ee:
                     self.downgrade_ssh_crypto = True
                     if self.ssh_attempt_number == self.MAX_SSH_ATTEMPT:
-                        error = "Timeout connecting to TCP port {1} on host:{0}".format(self.host, self.port)
+                        error = "Timeout connecting to TCP port {1} on host:{0}".format(
+                            self.host, self.port
+                        )
                         logger.critical(error)
                         raise OSError(error)
                     else:
@@ -277,8 +321,12 @@ class Shell(HasRequiredTraits):
 
                 except SSHException as ee:
                     self.downgrade_ssh_crypto = True
-                    if self.ssh_attempt_number == self.MAX_SSH_ATTEMPT: 
-                        error = "Connection to host:{0} on TCP port {1} was reset".format(self.host, self.port)
+                    if self.ssh_attempt_number == self.MAX_SSH_ATTEMPT:
+                        error = (
+                            "Connection to host:{0} on TCP port {1} was reset".format(
+                                self.host, self.port
+                            )
+                        )
                         logger.critical(error)
                         raise OSError(error)
                     else:
@@ -289,7 +337,7 @@ class Shell(HasRequiredTraits):
             for account in self.account_list:
                 conn.login(account)
                 try:
-                    assert isinstance(conn, SSH2)   # This succeeds if logged in...
+                    assert isinstance(conn, SSH2)  # This succeeds if logged in...
                     login_success = True
                     break
                 except AssertionError as aa:
@@ -314,8 +362,7 @@ class Shell(HasRequiredTraits):
         if self.json_logfile == "/dev/null":
             return None
         else:
-            self.jh = open(os.path.expanduser(self.json_logfile), "w",
-                encoding="utf-8")
+            self.jh = open(os.path.expanduser(self.json_logfile), "w", encoding="utf-8")
             atexit.register(self.close_json_log)
             return True
 
@@ -338,15 +385,22 @@ class Shell(HasRequiredTraits):
         assert isinstance(timeout, bool)
         # Pretty json output... or reference json docs
         #     https://stackoverflow.com/a/12944035/667301
-        self.jh.write(json.dumps(
-            {"time": str(arrow.now()),
-             "cmd": cmd,
-             "host": self.host,
-             "action": action,
-             "result": result,
-             "timeout": timeout,
-             }, indent=4, sort_keys=True)+","
-            +os.linesep)
+        self.jh.write(
+            json.dumps(
+                {
+                    "time": str(arrow.now()),
+                    "cmd": cmd,
+                    "host": self.host,
+                    "action": action,
+                    "result": result,
+                    "timeout": timeout,
+                },
+                indent=4,
+                sort_keys=True,
+            )
+            + ","
+            + os.linesep
+        )
 
     def append_account(self, account):
         # From the exscript docs...
@@ -419,9 +473,11 @@ class Shell(HasRequiredTraits):
             else:
                 raise ValueError("Cannot parse the textfsm template")
 
-    def execute(self, cmd="", prompt_list=(), timeout=0, template=None, debug=0, consume=True):
+    def execute(
+        self, cmd="", prompt_list=(), timeout=0, template=None, debug=0, consume=True
+    ):
         assert isinstance(cmd, str)
-        if cmd.strip()=="":
+        if cmd.strip() == "":
             assert len(cmd.splitlines()) == 0
         else:
             assert len(cmd.splitlines()) == 1
@@ -447,22 +503,22 @@ class Shell(HasRequiredTraits):
         self.json_log_entry(cmd=cmd, action="execute", timeout=False)
 
         # Handle sudo command...
-        if cmd.strip()[0:4]=="sudo":
+        if cmd.strip()[0:4] == "sudo":
             pre_sudo_prompts = self.conn.get_prompt()
             # FIXME I removed re.compile from the sudo prompt. Example prompt:
-            #    [sudo] password for mpenning: 
+            #    [sudo] password for mpenning:
             sudo_prompt = re.compile(r"[\r\n].+?:")
             prompts_w_sudo = copy.deepcopy(pre_sudo_prompts)
             prompts_w_sudo.insert(0, sudo_prompt)
             self.conn.set_prompt(prompts_w_sudo)
 
             # Sending sudo cmd here...
-            self.conn.send(cmd+os.linesep)
+            self.conn.send(cmd + os.linesep)
             prompt_idx, re_match_object = self.conn.expect_prompt()
             # idx==0 is a sudo password prompt...
-            if prompt_idx==0:
+            if prompt_idx == 0:
                 self.conn.set_prompt(self.default_prompt_list)
-                self.conn.send(self.password+os.linesep)
+                self.conn.send(self.password + os.linesep)
                 prompt_idx, re_match_object = self.conn.expect_prompt()
                 assert isinstance(prompt_idx, int)
 
@@ -476,7 +532,9 @@ class Shell(HasRequiredTraits):
                 self.conn.execute(cmd)
 
             except ConnectionResetError as dd:
-                error = "SSH session with {0} was reset while running cmd='{1}'".format(self.host, cmd)
+                error = "SSH session with {0} was reset while running cmd='{1}'".format(
+                    self.host, cmd
+                )
                 raise ConnectionResetError(error)
 
             except InvalidCommandException as ee:
@@ -542,7 +600,7 @@ class Shell(HasRequiredTraits):
 
     def set_timeout(self, timeout=0):
         """Set the command timeout"""
-        if isinstance(timeout, int) and timeout>0:
+        if isinstance(timeout, int) and timeout > 0:
             return self.conn.set_timeout(timeout)
 
     def set_custom_prompts(self, prompt_list=()):
@@ -557,7 +615,9 @@ class Shell(HasRequiredTraits):
         """Extend the expected prompts with prompts in prompt_list"""
         normal_prompts = self.conn.get_prompt()
         custom_prompts = copy.copy(normal_prompts)
-        if (isinstance(prompt_list, tuple) or isinstance(prompt_list, list)) and len(prompt_list) > 0:
+        if (isinstance(prompt_list, tuple) or isinstance(prompt_list, list)) and len(
+            prompt_list
+        ) > 0:
             prompt_list.reverse()
             for prompt in prompt_list:
                 if isinstance(prompt, str):
@@ -579,6 +639,7 @@ class Shell(HasRequiredTraits):
     def response(self):
         return self.conn.response
 
+
 @logger.catch(default=True, onerror=lambda _: sys.exit(1))
 def reset_conn_parameters(conn=None):
     assert isinstance(conn, SSH2)
@@ -587,5 +648,5 @@ def reset_conn_parameters(conn=None):
     conn.set_timeout(DEFAULT_PROMPT_TIMEOUT)
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     pass
