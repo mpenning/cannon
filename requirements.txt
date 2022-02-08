@@ -1,4 +1,5 @@
 exscript="2.6.3"
 loguru="0.5.3"
 traits="6.3.2"
-textfsm="1.1.2"
+textfsm="1.2.2"
+arrow>="1.2.2"
