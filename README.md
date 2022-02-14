@@ -6,7 +6,7 @@ devices with ssh.
 
 ## Example Usage - Cisco IOS
 
-This script will login, run a few show commands
+This script will login, run a few show commands.  If you want an interactive session, set `interact=True` when calling Shell()
 
 ```python
 import sys

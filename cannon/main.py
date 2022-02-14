@@ -27,6 +27,7 @@ from loguru import logger
 
 import arrow
 
+"""Interface down logs: 'show log messages | match SNMP_TRAP_LINK_DOWN'"""
 
 from getpass import getpass, getuser
 from io import StringIO
@@ -167,6 +168,7 @@ class Shell(HasRequiredTraits):
     json_logfile = File(value="/dev/null", required=False)
     jh = Any(value=None)
     encoding = PrefixList(value="utf-8", values=["latin-1", "utf-8"], required=False)
+    interact = Bool(value=False, values=[True, False])
     downgrade_ssh_crypto = Bool(value=False, values=[True, False])
     ssh_attempt_number = Range(value=1, low=1, high=3, required=False)
     conn = Any(required=False)
@@ -208,8 +210,25 @@ class Shell(HasRequiredTraits):
             self.open_json_log()
             self.json_log_entry(cmd="ssh2", action="login", timeout=False)
 
+        if self.interact is True:
+            self.interactive_session()
+
     def __repr__(self):
         return """<Shell: %s>""" % self.host
+
+    def interactive_session(self):
+        """Basic method to run an interactive session
+        TODO - write timestamped interactive session to disk...
+        """
+
+        finished = False
+        while finished is not True:
+            cmd = input("interact-prompt# ")
+            self.execute(cmd, consume=False, timeout=10)
+            for line in self.conn.response.splitlines():
+                print(line.strip())
+
+
 
     def search_inventory_for_host_address(self, hostname=None):
         """Use an inventory file to map the input hostname to an IPv4 or IPv6 address"""
@@ -425,14 +444,6 @@ class Shell(HasRequiredTraits):
             retval.append(ii)
 
         self.conn.set_prompt(retval)
-
-    def interact(self):
-        raise NotImplementedError
-        print("Delegating processing to a human...")
-        finished = False
-        while not finished:
-            cmd = input()
-            self.execute(cmd.strip(), consume=False)
 
     def tfsm(self, template=None, input_str=None):
         """Run the textfsm template against input_str"""

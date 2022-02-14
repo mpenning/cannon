@@ -2,9 +2,9 @@ import sys
 
 sys.path.insert(0, "..")
 
-import pytest
 from cannon import Shell, Account
 
+# TODO break out individual ssh session with explicit unittest setup & teardown
 def test_routeviews_all_cmds():
     """ssh to route-views.routeviews.org and run commands.  Currently this also exercises cannon's ssh kexalgorithms and ssh cipher fallback"""
     conn = Shell(host='route-views.routeviews.org', account=Account('rviews', ''),)
