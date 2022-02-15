@@ -147,7 +147,7 @@ class Shell(HasRequiredTraits):
     username = Str(value=getuser(), required=False)
     password = Str(value="", required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
-    inventory = File(required=False, default=None)
+    inventory_file = File(required=False, default=None)
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
         value="generic", values=["generic", "shell", "junos", "ios"], required=False
@@ -233,7 +233,7 @@ class Shell(HasRequiredTraits):
                 print(line.strip())
 
     def search_inventory_for_host_address(self, hostname=None):
-        """Use an inventory file to map the input hostname to an IPv4 or IPv6 address"""
+        """Use an ansible-style inventory file to map the input hostname to an IPv4 or IPv6 address"""
 
         logger.debug("Checking inventory for hostname='%s'" % hostname)
         # Search inventory first...
@@ -277,21 +277,21 @@ class Shell(HasRequiredTraits):
         # Raise a non-fatal error...
         logger.warning(
             "Could not resolve or match hostname='%s' in the inventory file: %s"
-            % (hostname, self.inventory)
+            % (hostname, self.inventory_file)
         )
         return None
 
     def iter_inventory_lines(self):
 
         # Handle the default invntory value...
-        if self.inventory.strip() == "":
+        if self.inventory_file.strip() == "":
             return []
-        if os.path.isfile(os.path.expanduser(self.inventory)):
-            with open(self.inventory, "r", encoding="utf=8") as fh:
+        if os.path.isfile(os.path.expanduser(self.inventory_file)):
+            with open(self.inventory_file, "r", encoding="utf=8") as fh:
                 for line in fh.read().splitlines():
                     yield line.lower()
         else:
-            raise OSError("Cannot find inventory file named '%s'" % self.inventory)
+            raise OSError("Cannot find inventory file named '%s'" % self.inventory_file)
 
     def do_ssh_login(
         self,
