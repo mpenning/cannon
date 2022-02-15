@@ -34,7 +34,7 @@ from io import StringIO
 from ipaddress import ip_address as stdlib_ip_factory
 import socket as sock
 import pkg_resources
-import readline # https://stackoverflow.com/a/14796424/667301
+import readline  # https://stackoverflow.com/a/14796424/667301
 import atexit
 import time
 import json
@@ -181,7 +181,7 @@ class Shell(HasRequiredTraits):
     def __init__(self, **traits):
         super().__init__(**traits)
 
-        logger.warning("Received self.host='%s'" % self.host)
+        self.original_host = copy.copy(self.host)
         assert self.host != ""
         assert isinstance(self.port, int)
         assert len(self.account_list) == 0
@@ -200,11 +200,11 @@ class Shell(HasRequiredTraits):
 
         # Check whether host matches an ip address in the inventory...
         # Overwrite self.host with resolved IP Address...
-        original_host = copy.copy(self.host)
-        self.original_host = original_host
         resolved_host = self.search_inventory_for_host_address(self.host)
-        logger.debug("Shell(host='%s') resolved host to '%s'" % (original_host,
-            resolved_host))
+        logger.debug(
+            "Shell(host='%s') resolved host to '%s'"
+            % (self.original_host, resolved_host)
+        )
         self.host = resolved_host
 
         self.conn = self.do_ssh_login(debug=self.debug)
@@ -251,7 +251,9 @@ class Shell(HasRequiredTraits):
             if mm is not None:
                 host_ip = mm.group(3)
                 tmp = stdlib_ip_factory(host_ip)  # This will raise a ValueError
-                logger.debug("Found inventory match for '%s' -> %s" % (hostname, host_ip))
+                logger.debug(
+                    "Found inventory match for '%s' -> %s" % (hostname, host_ip)
+                )
                 return host_ip
 
         else:
