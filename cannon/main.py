@@ -147,7 +147,7 @@ class Shell(HasRequiredTraits):
     username = Str(value=getuser(), required=False)
     password = Str(value="", required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
-    inventory = File(value=os.path.expanduser("~/inventory.ini"), required=False)
+    inventory = File(required=False, default=None)
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
         value="generic", values=["generic", "shell", "junos", "ios"], required=False
@@ -196,8 +196,12 @@ class Shell(HasRequiredTraits):
             raise ValueError("Shell() calls with password are not supported")
 
         # Check whether host matches an ip address in the inventory...
-        host_address = self.search_inventory_for_host_address(self.host)
-        print("DISCOVERED HOST in %s" % self.inventory, host_address)
+        # Overwrite self.host with resolved IP Address...
+        original_host = self.host
+        resolved_host = self.search_inventory_for_host_address(self.host)
+        logger.debug("Shell(host='%s') resolved host to '%s'" % (original_host,
+            resolved_host))
+        self.host = resolved_host
 
         self.conn = self.do_ssh_login(debug=self.debug)
         self.allow_invalid_command = True
@@ -264,7 +268,7 @@ class Shell(HasRequiredTraits):
         logger.debug(valid_ipv6)
         try:
             if stdlib_ip_factory(valid_ipv6):
-                logger.debug("No ipv4 DNS record for '%s'" % hostname)
+                logger.debug("No ipv6 DNS record for '%s'" % hostname)
                 return valid_ipv6
         except ValueError:
             # Fall through to the next step
@@ -278,6 +282,10 @@ class Shell(HasRequiredTraits):
         return None
 
     def iter_inventory_lines(self):
+
+        # Handle the default invntory value...
+        if self.inventory.strip() == "":
+            return []
         if os.path.isfile(os.path.expanduser(self.inventory)):
             with open(self.inventory, "r", encoding="utf=8") as fh:
                 for line in fh.read().splitlines():
