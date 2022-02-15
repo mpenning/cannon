@@ -232,11 +232,10 @@ class Shell(HasRequiredTraits):
             for line in self.conn.response.splitlines():
                 print(line.strip())
 
-
-
     def search_inventory_for_host_address(self, hostname=None):
         """Use an inventory file to map the input hostname to an IPv4 or IPv6 address"""
 
+        logger.debug("Checking inventory for hostname='%s'" % hostname)
         # Search inventory first...
         for line in self.iter_inventory_lines():
             # Try to resolve the address as an ansible hostfile...
