@@ -233,24 +233,7 @@ class Shell(HasRequiredTraits):
     def search_inventory_for_host_address(self, hostname=None):
         """Use an inventory file to map the input hostname to an IPv4 or IPv6 address"""
 
-        # If this resolves to a valid ipv4 string, return the ipv4 string
-        valid_ipv4 = sock.getaddrinfo(hostname, None, sock.AF_INET)[0][4][0]
-        logger.debug(valid_ipv4)
-        try:
-            if stdlib_ip_factory(valid_ipv4):
-                return valid_ipv4
-        except ValueError:
-            return None
-
-        # If this resolves to a valid ipv6 string, return the ipv6 string
-        valid_ipv6 = sock.getaddrinfo(hostname, None, sock.AF_INET6)[0][4][0]
-        logger.debug(valid_ipv6)
-        try:
-            if stdlib_ip_factory(valid_ipv6):
-                return valid_ipv6
-        except ValueError:
-            return None
-
+        # Search inventory first...
         for line in self.iter_inventory_lines():
             # Try to resolve the address as an ansible hostfile...
             mm = re.search(
@@ -263,9 +246,34 @@ class Shell(HasRequiredTraits):
                 print("MATCH host name to inventory", host_ip, line)
                 return host_ip
 
+        else:
+            logger.debug("No inventory match for '%s'" % hostname)
+
+        # If this resolves to a valid ipv4 string, return the ipv4 string
+        valid_ipv4 = sock.getaddrinfo(hostname, None, sock.AF_INET)[0][4][0]
+        logger.debug(valid_ipv4)
+        try:
+            if stdlib_ip_factory(valid_ipv4):
+                return valid_ipv4
+        except ValueError:
+            logger.debug("No ipv4 DNS record for '%s'" % hostname)
+            # Fall through to the next step
+            pass
+
+        # If this resolves to a valid ipv6 string, return the ipv6 string
+        valid_ipv6 = sock.getaddrinfo(hostname, None, sock.AF_INET6)[0][4][0]
+        logger.debug(valid_ipv6)
+        try:
+            if stdlib_ip_factory(valid_ipv6):
+                logger.debug("No ipv4 DNS record for '%s'" % hostname)
+                return valid_ipv6
+        except ValueError:
+            # Fall through to the next step
+            pass
+
         # Raise a non-fatal error...
         logger.warning(
-            "Could not find hostname=%s in the inventory file: %s"
+            "Could not resolve or match hostname='%s' in the inventory file: %s"
             % (hostname, self.inventory)
         )
         return None
