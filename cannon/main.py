@@ -232,7 +232,6 @@ class Shell(HasRequiredTraits):
 
     def search_inventory_for_host_address(self, hostname=None):
         """Use an inventory file to map the input hostname to an IPv4 or IPv6 address"""
-        return None
 
         # If this resolves to a valid ipv4 string, return the ipv4 string
         valid_ipv4 = sock.getaddrinfo(hostname, None, sock.AF_INET)[0][4][0]
