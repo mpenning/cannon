@@ -181,6 +181,7 @@ class Shell(HasRequiredTraits):
     def __init__(self, **traits):
         super().__init__(**traits)
 
+        logger.warning("Received self.host='%s'" % self.host)
         assert self.host != ""
         assert isinstance(self.port, int)
         assert len(self.account_list) == 0
