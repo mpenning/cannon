@@ -241,9 +241,8 @@ class Shell(HasRequiredTraits):
                 line.lower(),
             )
             if mm is not None:
-                host_ip = mm.group(2)
-                assert stdlib_ip_factory(host_ip)  # This will raise a ValueError
-                print("MATCH host name to inventory", host_ip, line)
+                host_ip = mm.group(3)
+                tmp = stdlib_ip_factory(host_ip)  # This will raise a ValueError
                 return host_ip
 
         else:
