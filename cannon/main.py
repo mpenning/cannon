@@ -247,6 +247,7 @@ class Shell(HasRequiredTraits):
             if mm is not None:
                 host_ip = mm.group(3)
                 tmp = stdlib_ip_factory(host_ip)  # This will raise a ValueError
+                logger.debug("Found inventory match for '%s' -> %s" % (hostname, host_ip))
                 return host_ip
 
         else:
