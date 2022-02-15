@@ -199,7 +199,7 @@ class Shell(HasRequiredTraits):
 
         # Check whether host matches an ip address in the inventory...
         # Overwrite self.host with resolved IP Address...
-        original_host = self.host
+        original_host = copy.copy(self.host)
         self.original_host = original_host
         resolved_host = self.search_inventory_for_host_address(self.host)
         logger.debug("Shell(host='%s') resolved host to '%s'" % (original_host,
