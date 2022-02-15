@@ -148,6 +148,7 @@ class Shell(HasRequiredTraits):
     username = Str(value=getuser(), required=False)
     password = Str(value="", required=False)
     private_key_path = File(value=os.path.expanduser("~/.ssh/id_rsa"))
+    original_host = Str(value="", required=False)
     inventory_file = File(required=False, default=None)
     # FIXME - needs more drivers... -> https://exscript.readthedocs.io/en/latest/Exscript.protocols.drivers.html
     driver = PrefixList(
@@ -199,6 +200,7 @@ class Shell(HasRequiredTraits):
         # Check whether host matches an ip address in the inventory...
         # Overwrite self.host with resolved IP Address...
         original_host = self.host
+        self.original_host = original_host
         resolved_host = self.search_inventory_for_host_address(self.host)
         logger.debug("Shell(host='%s') resolved host to '%s'" % (original_host,
             resolved_host))
@@ -228,7 +230,7 @@ class Shell(HasRequiredTraits):
 
         finished = False
         while finished is not True:
-            cmd = input("interact-prompt# ")
+            cmd = input("{0}# ".format(self.host))
             for line in cmd.splitlines():
                 self.execute(line, consume=False, timeout=10)
                 for line in self.conn.response.splitlines():
