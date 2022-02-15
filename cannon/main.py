@@ -34,6 +34,7 @@ from io import StringIO
 from ipaddress import ip_address as stdlib_ip_factory
 import socket as sock
 import pkg_resources
+import readline # https://stackoverflow.com/a/14796424/667301
 import atexit
 import time
 import json
@@ -228,9 +229,10 @@ class Shell(HasRequiredTraits):
         finished = False
         while finished is not True:
             cmd = input("interact-prompt# ")
-            self.execute(cmd, consume=False, timeout=10)
-            for line in self.conn.response.splitlines():
-                print(line.strip())
+            for line in cmd.splitlines():
+                self.execute(line, consume=False, timeout=10)
+                for line in self.conn.response.splitlines():
+                    print(line.strip())
 
     def search_inventory_for_host_address(self, hostname=None):
         """Use an ansible-style inventory file to map the input hostname to an IPv4 or IPv6 address"""
