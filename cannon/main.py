@@ -231,7 +231,7 @@ class Shell(HasRequiredTraits):
 
         finished = False
         while finished is not True:
-            cmd = input("{0}# ".format(self.host))
+            cmd = input("{0}# ".format(self.original_host))
             for line in cmd.splitlines():
                 self.execute(line, consume=False, timeout=10)
                 for line in self.conn.response.splitlines():
