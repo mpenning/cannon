@@ -290,11 +290,13 @@ class Shell(HasRequiredTraits):
 
     def iter_inventory_lines(self):
 
+        explicit_inventory_filepath = os.path.expanduser(self.inventory_file)
+
         # Handle the default invntory value...
         if self.inventory_file.strip() == "":
             return []
-        if os.path.isfile(os.path.expanduser(self.inventory_file)):
-            with open(self.inventory_file, "r", encoding="utf=8") as fh:
+        if os.path.isfile(explicit_inventory_filepath):
+            with open(explicit_inventory_filepath, "r", encoding="utf=8") as fh:
                 for line in fh.read().splitlines():
                     yield line.lower()
         else:
